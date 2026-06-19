@@ -12,7 +12,7 @@ import {
   formatPct,
   groupBandwidthBySize,
   computeBoxStats,
-  bpsToMbps,
+  niceAxis,
 } from '@/lib/utils';
 
 type AppState = 'setup' | 'testing' | 'done';
@@ -44,15 +44,23 @@ export function SpeedTest() {
   const downLoadedLatencyStats = useMemo(() => computeBoxStats(downLoadedLatencyPoints), [downLoadedLatencyPoints]);
   const upLoadedLatencyStats = useMemo(() => computeBoxStats(upLoadedLatencyPoints), [upLoadedLatencyPoints]);
 
-  const latencyMax = useMemo(() => {
+  // Separate "nice" axes per column — like Cloudflare, download and upload get
+  // independent scales (so upload boxes aren't crushed by the download scale),
+  // and all three latency plots share one scale for easy comparison.
+  const latencyAxis = useMemo(() => {
     const all = [...unloadedLatencyPoints, ...downLoadedLatencyPoints, ...upLoadedLatencyPoints];
-    return all.length ? Math.ceil(Math.max(...all) * 1.3) : 400;
+    return niceAxis(all.length ? Math.max(...all) : 200);
   }, [unloadedLatencyPoints, downLoadedLatencyPoints, upLoadedLatencyPoints]);
 
-  const bwMax = useMemo(() => {
-    const allBps = [...downloadPoints, ...uploadPoints].map((p) => p.bps);
-    return allBps.length ? Math.ceil(Math.max(...allBps) * 1.2) : 1_000_000_000;
-  }, [downloadPoints, uploadPoints]);
+  const downloadAxis = useMemo(() => {
+    const maxBps = downloadPoints.length ? Math.max(...downloadPoints.map((p) => p.bps)) : 0;
+    return niceAxis(maxBps || 250_000_000);
+  }, [downloadPoints]);
+
+  const uploadAxis = useMemo(() => {
+    const maxBps = uploadPoints.length ? Math.max(...uploadPoints.map((p) => p.bps)) : 0;
+    return niceAxis(maxBps || 100_000_000);
+  }, [uploadPoints]);
 
   const handleStart = async (d: string, ct: ConnectionType) => {
     setDistrict(d);
@@ -267,21 +275,25 @@ export function SpeedTest() {
           <div className="space-y-2">
             {latencyStats ? (
               <LatencyBoxPlotRow
-                label={`Unloaded latency (${unloadedLatencyPoints.length}/${unloadedLatencyPoints.length})`}
+                label="Unloaded latency"
                 count={unloadedLatencyPoints.length}
                 stats={latencyStats}
-                maxValue={latencyMax}
-                color="#f97316"
+                values={unloadedLatencyPoints}
+                maxValue={latencyAxis.max}
+                ticks={latencyAxis.ticks}
+                color="#f6821f"
               />
             ) : (
               <EmptyBox label="Unloaded latency" />
             )}
             {downLoadedLatencyStats ? (
               <LatencyBoxPlotRow
-                label={`Latency during download (${downLoadedLatencyPoints.length})`}
+                label="Latency during download"
                 count={downLoadedLatencyPoints.length}
                 stats={downLoadedLatencyStats}
-                maxValue={latencyMax}
+                values={downLoadedLatencyPoints}
+                maxValue={latencyAxis.max}
+                ticks={latencyAxis.ticks}
                 color="#f6821f"
               />
             ) : (
@@ -289,10 +301,12 @@ export function SpeedTest() {
             )}
             {upLoadedLatencyStats ? (
               <LatencyBoxPlotRow
-                label={`Latency during upload (${upLoadedLatencyPoints.length})`}
+                label="Latency during upload"
                 count={upLoadedLatencyPoints.length}
                 stats={upLoadedLatencyStats}
-                maxValue={latencyMax}
+                values={upLoadedLatencyPoints}
+                maxValue={latencyAxis.max}
+                ticks={latencyAxis.ticks}
                 color="#7c3aed"
               />
             ) : (
@@ -351,7 +365,9 @@ export function SpeedTest() {
                   label={`${g.label} download test`}
                   count={g.stats.count}
                   stats={g.stats}
-                  maxValue={bwMax}
+                  values={g.values}
+                  maxValue={downloadAxis.max}
+                  ticks={downloadAxis.ticks}
                   color="#f6821f"
                   unit="bps"
                 />
@@ -374,7 +390,9 @@ export function SpeedTest() {
                   label={`${g.label} upload test`}
                   count={g.stats.count}
                   stats={g.stats}
-                  maxValue={bwMax}
+                  values={g.values}
+                  maxValue={uploadAxis.max}
+                  ticks={uploadAxis.ticks}
                   color="#7c3aed"
                   unit="bps"
                 />

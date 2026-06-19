@@ -127,29 +127,52 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
   const start = useCallback(async () => {
     setState({ ...initialState, status: 'running' });
 
-    // Fetch edge info for ISP/colo display
+    // ISP / ASN / client IP come from our api worker (accurate regardless of which
+    // colo it happens to route to).
     const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
     if (apiBase) {
       fetch(`${apiBase}/v1/health`)
         .then((r) => r.json())
         .then((data: {
-          colo?: string | null;
-          city?: string | null;
           asn?: number | null;
           asOrganization?: string | null;
           clientIp?: string | null;
         }) => {
           setState((prev) => ({
             ...prev,
-            edgeColo: data.colo ?? null,
-            edgeCity: data.city ?? null,
             asn: data.asn ?? null,
             ispName: data.asOrganization ?? null,
-            clientIp: data.clientIp ?? null,
+            clientIp: prev.clientIp ?? data.clientIp ?? null,
           }));
         })
         .catch(() => {});
     }
+
+    // The *server location* must reflect the colo that actually served the
+    // measurement (speed.cloudflare.com or the self-hosted worker), not our api
+    // worker — those can differ. `/cdn-cgi/trace` reports the real edge colo.
+    const { coloCity } = await import('@/lib/utils');
+    const measurementBase =
+      process.env.NEXT_PUBLIC_SPEEDTEST_WORKER_URL?.replace(/\/$/, '') ||
+      'https://speed.cloudflare.com';
+    fetch(`${measurementBase}/cdn-cgi/trace`)
+      .then((r) => r.text())
+      .then((text) => {
+        const trace = Object.fromEntries(
+          text.trim().split('\n').map((line) => {
+            const i = line.indexOf('=');
+            return [line.slice(0, i), line.slice(i + 1)];
+          }),
+        );
+        const colo = trace.colo || null;
+        setState((prev) => ({
+          ...prev,
+          edgeColo: colo,
+          edgeCity: coloCity(colo),
+          clientIp: trace.ip || prev.clientIp,
+        }));
+      })
+      .catch(() => {});
 
     const engine = await createEngine();
     engine.play();

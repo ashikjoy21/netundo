@@ -79,15 +79,15 @@ export function SpeedChart({ points, color, fillColor, percentile, label, curren
             {pctMbps != null && (
               <ReferenceLine
                 y={pctMbps}
-                stroke={color}
-                strokeDasharray="4 3"
-                strokeOpacity={0.6}
+                stroke="#9ca3af"
+                strokeDasharray="3 3"
+                strokeOpacity={0.7}
                 label={{
                   value: '90th percentile',
-                  position: 'insideTopRight',
+                  position: 'insideTopLeft',
                   fontSize: 10,
-                  fill: color,
-                  opacity: 0.8,
+                  fill: '#9ca3af',
+                  dy: -2,
                 }}
               />
             )}
