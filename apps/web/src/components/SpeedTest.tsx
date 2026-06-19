@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
-import { Cloud, Hash, LocateFixed, MapPin, RadioTower, Router, Server, Share2, Wifi } from 'lucide-react';
+import { Cloud, Hash, LocateFixed, MapPin, Pause, Play, RadioTower, RotateCcw, Router, Server, Share2, Wifi } from 'lucide-react';
 import { useSpeedTest } from '@/hooks/useSpeedTest';
 import { SpeedChart } from './SpeedChart';
 import { NetworkQuality } from './NetworkQuality';
@@ -12,7 +12,6 @@ import { AreaRanking } from './AreaRanking';
 import {
   formatMbps,
   formatMs,
-  formatPct,
   groupBandwidthBySize,
   computeBoxStats,
   niceAxis,
@@ -149,7 +148,6 @@ export function SpeedTest() {
       latencyUnderLoad: 'Measuring loaded latency…',
       download: 'Measuring download speed…',
       upload: 'Measuring upload speed…',
-      packetLoss: 'Measuring packet loss…',
     };
     return labels[currentPhase] ?? currentPhase;
   }, [currentPhase]);
@@ -219,7 +217,7 @@ export function SpeedTest() {
             </div>
           </div>
 
-          {/* Right column: Latency / Jitter / Packet Loss */}
+          {/* Right column: Latency / Jitter */}
           <div className="flex flex-col gap-4 min-w-[160px]">
             <MetricStat
               label="Latency"
@@ -237,24 +235,18 @@ export function SpeedTest() {
               sub2={{ label: 'upload', value: formatMs(summary.upLoadedJitter), color: '#7c3aed' }}
               tooltip="Variation in latency between consecutive pings. Sub-values show jitter while loaded during download (↓) and upload (↑)."
             />
-            <MetricStat
-              label="Packet Loss"
-              value={formatPct(summary.packetLoss)}
-              unit="%"
-              tooltip="Percentage of data packets lost in transit"
-            />
           </div>
         </div>
 
         {/* Action buttons */}
         <div className="flex flex-wrap items-center gap-3 mt-5">
           {isRunning ? (
-            <ActionBtn onClick={pause} icon="⏸" label="Pause" />
+            <ActionBtn onClick={pause} icon={<Pause className="h-4 w-4" />} label="Pause" />
           ) : isPaused ? (
-            <ActionBtn onClick={resume} icon="▶" label="Resume" />
+            <ActionBtn onClick={resume} icon={<Play className="h-4 w-4" />} label="Resume" />
           ) : null}
 
-          <ActionBtn onClick={handleRetest} icon="↺" label="Retest" />
+          <ActionBtn onClick={handleRetest} icon={<RotateCcw className="h-4 w-4" />} label="Retest" />
 
           {isDone && (
             <ShareButton
@@ -367,43 +359,6 @@ export function SpeedTest() {
           </div>
         </section>
       </div>
-
-      {/* ── Packet Loss ── */}
-      <section className="space-y-3">
-        <SectionHeader title="Packet Loss Measurements" />
-        <div className="border border-gray-200 rounded-xl bg-white overflow-hidden">
-          <details open>
-            <summary className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 select-none list-none">
-              <span className="text-sm font-medium text-gray-700">
-                Packet Loss Test
-              </span>
-              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </summary>
-            <div className="px-4 pb-4 pt-1">
-              {summary.packetLoss != null ? (
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>Received</span>
-                    <span>{(100 - (summary.packetLoss ?? 0) * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="w-full h-6 rounded bg-green-100 relative overflow-hidden">
-                    <div
-                      className="h-full bg-green-500 flex items-center justify-center text-white text-xs font-semibold transition-all"
-                      style={{ width: `${100 - (summary.packetLoss ?? 0) * 100}%` }}
-                    >
-                      {(100 - (summary.packetLoss ?? 0) * 100).toFixed(1)}%
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-gray-400 py-2">Couldn't be measured on this network — packet loss uses a UDP connection that some mobile/broadband networks block (Cloudflare's own test shows blank here too).</p>
-              )}
-            </div>
-          </details>
-        </div>
-      </section>
 
       {/* ── Download Measurements ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -589,13 +544,13 @@ function planVerdict(pct: number) {
   };
 }
 
-function ActionBtn({ onClick, icon, label }: { onClick: () => void; icon: string; label: string }) {
+function ActionBtn({ onClick, icon, label }: { onClick: () => void; icon: React.ReactNode; label: string }) {
   return (
     <button
       onClick={onClick}
       className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-gray-200 text-sm text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition-all"
     >
-      <span>{icon}</span>
+      <span className="text-cf-orange">{icon}</span>
       <span>{label}</span>
     </button>
   );
