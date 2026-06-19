@@ -1,13 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Smartphone, Wifi, Cable, MapPin, Loader2 } from 'lucide-react';
-
-const KERALA_DISTRICTS = [
-  'Thiruvananthapuram', 'Kollam', 'Pathanamthitta', 'Alappuzha', 'Kottayam',
-  'Idukki', 'Ernakulam', 'Thrissur', 'Palakkad', 'Malappuram',
-  'Kozhikode', 'Wayanad', 'Kannur', 'Kasaragod',
-] as const;
+import { Smartphone, Wifi, Cable, Loader2, LocateFixed } from 'lucide-react';
+import { DISTRICT_LATLNG } from '@/lib/utils';
 
 export type ConnectionType = 'mobile' | 'wifi' | 'wired';
 
@@ -18,7 +13,7 @@ export interface GeoCoords {
 }
 
 interface Props {
-  onConfirm: (district: string, connectionType: ConnectionType, coords: GeoCoords | null) => void;
+  onConfirm: (district: string, connectionType: ConnectionType, coords: GeoCoords) => void;
 }
 
 const CONN_META: Record<ConnectionType, { label: string; Icon: typeof Wifi }> = {
@@ -29,24 +24,28 @@ const CONN_META: Record<ConnectionType, { label: string; Icon: typeof Wifi }> = 
 
 export function DistrictPicker({ onConfirm }: Props) {
   const [district, setDistrict] = useState('');
-  const [connType, setConnType] = useState<ConnectionType>('wifi');
-  const [shareLocation, setShareLocation] = useState(false);
+  const [connType, setConnType] = useState<ConnectionType | ''>('');
+  const [detectedConnType, setDetectedConnType] = useState<ConnectionType | null>(null);
   const [coords, setCoords] = useState<GeoCoords | null>(null);
-  const [geoState, setGeoState] = useState<'idle' | 'locating' | 'denied'>('idle');
+  const [geoState, setGeoState] = useState<'idle' | 'locating' | 'denied' | 'unsupported'>('idle');
 
-  // Detect connection type from NetworkInformation API (Android/Chrome only)
+  // Browser support is partial: Chrome Android can expose cellular/ethernet/wifi,
+  // while Safari/iOS usually hides the physical connection type.
   useEffect(() => {
     const nav = navigator as Navigator & {
       connection?: { effectiveType?: string; type?: string };
     };
     const conn = nav.connection;
-    if (conn?.type === 'cellular') setConnType('mobile');
-    else if (conn?.type === 'ethernet') setConnType('wired');
+    const detected = detectConnectionType(conn?.type);
+    if (detected) {
+      setDetectedConnType(detected);
+      setConnType(detected);
+    }
   }, []);
 
   const requestLocation = () => {
     if (!navigator.geolocation) {
-      setGeoState('denied');
+      setGeoState('unsupported');
       return;
     }
     setGeoState('locating');
@@ -57,55 +56,71 @@ export function DistrictPicker({ onConfirm }: Props) {
           lng: pos.coords.longitude,
           accuracyM: Math.round(pos.coords.accuracy),
         });
-        setShareLocation(true);
+        setDistrict(inferDistrict(pos.coords.latitude, pos.coords.longitude));
         setGeoState('idle');
       },
       () => {
-        setShareLocation(false);
         setCoords(null);
+        setDistrict('');
         setGeoState('denied');
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
     );
   };
 
-  const toggleShareLocation = () => {
-    if (shareLocation) {
-      setShareLocation(false);
-      setCoords(null);
-      setGeoState('idle');
-    } else {
-      requestLocation();
-    }
-  };
-
-  const ready = district !== '';
+  const ready = district !== '' && coords !== null && connType !== '';
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5 w-full max-w-md mx-auto">
       <div>
-        <h2 className="text-base font-semibold text-gray-800 mb-1">Where are you in Kerala?</h2>
-        <p className="text-sm text-gray-500">Your result helps map real network quality across Kerala.</p>
+        <h2 className="text-base font-semibold text-gray-800 mb-1">Confirm your test context</h2>
+        <p className="text-sm text-gray-500">
+          We use browser location to place your result in the right Kerala district automatically.
+        </p>
       </div>
 
-      {/* District */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1.5">District</label>
-        <select
-          value={district}
-          onChange={(e) => setDistrict(e.target.value)}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cf-orange/50 focus:border-cf-orange"
+      <button
+        type="button"
+        onClick={requestLocation}
+        className={`w-full flex items-start gap-3 rounded-xl border p-4 text-left transition-all ${
+          coords ? 'border-cf-orange bg-cf-orange/5' : 'border-gray-200 hover:border-gray-300'
+        }`}
+      >
+        <span
+          className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+            coords ? 'bg-cf-orange text-white' : 'bg-gray-100 text-gray-500'
+          }`}
         >
-          <option value="">Select your district</option>
-          {KERALA_DISTRICTS.map((d) => (
-            <option key={d} value={d}>{d}</option>
-          ))}
-        </select>
-      </div>
+          {geoState === 'locating' ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <LocateFixed className="w-4 h-4" strokeWidth={2.5} />
+          )}
+        </span>
+        <span className="text-sm">
+          <span className="font-semibold text-gray-800">
+            {coords ? `Detected ${district}` : 'Use my current location'}
+          </span>
+          <span className="block text-xs text-gray-500 mt-1 leading-5">
+            {geoState === 'denied'
+              ? 'Location permission is required to run a public Kerala test.'
+              : geoState === 'unsupported'
+              ? 'This browser does not support location access.'
+              : coords
+              ? `Accuracy about ${coords.accuracyM ?? '?'} m. Stored rounded for privacy.`
+              : 'Your browser will ask for permission. We infer district from your coordinates.'}
+          </span>
+        </span>
+      </button>
 
       {/* Connection type */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1.5">How are you connected?</label>
+        <div className="mb-1.5 flex items-center justify-between gap-3">
+          <label className="block text-sm font-medium text-gray-700">How are you connected?</label>
+          {detectedConnType && (
+            <span className="text-xs font-medium text-green-600">Auto-detected</span>
+          )}
+        </div>
         <div className="grid grid-cols-3 gap-2">
           {(Object.keys(CONN_META) as ConnectionType[]).map((type) => {
             const { label, Icon } = CONN_META[type];
@@ -126,41 +141,13 @@ export function DistrictPicker({ onConfirm }: Props) {
             );
           })}
         </div>
+        <p className="mt-2 text-xs text-gray-400">
+          Browsers do not always reveal Wi-Fi vs mobile. If this was not detected correctly, choose the right one.
+        </p>
       </div>
 
-      {/* Location opt-in */}
       <button
-        type="button"
-        onClick={toggleShareLocation}
-        className={`w-full flex items-start gap-3 rounded-lg border p-3 text-left transition-all ${
-          shareLocation ? 'border-cf-orange bg-cf-orange/5' : 'border-gray-200 hover:border-gray-300'
-        }`}
-      >
-        <span
-          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
-            shareLocation ? 'border-cf-orange bg-cf-orange text-white' : 'border-gray-300 text-transparent'
-          }`}
-        >
-          {geoState === 'locating' ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-cf-orange" />
-          ) : (
-            <MapPin className="w-3 h-3" strokeWidth={3} />
-          )}
-        </span>
-        <span className="text-sm">
-          <span className="font-medium text-gray-800">Pin my result on the live map</span>
-          <span className="block text-xs text-gray-500 mt-0.5">
-            {geoState === 'denied'
-              ? 'Location permission was blocked — your result will stay district-only.'
-              : coords
-              ? `Sharing approximate location (~${coords.accuracyM ?? '?'} m). Stored rounded for privacy.`
-              : 'Optional. Shares an approximate spot so others can see speeds near you.'}
-          </span>
-        </span>
-      </button>
-
-      <button
-        onClick={() => ready && onConfirm(district, connType, shareLocation ? coords : null)}
+        onClick={() => ready && onConfirm(district, connType, coords)}
         disabled={!ready}
         className="w-full py-3 rounded-lg bg-cf-orange text-white font-semibold text-sm transition-all hover:bg-cf-orange-dark disabled:opacity-40 disabled:cursor-not-allowed"
       >
@@ -168,8 +155,35 @@ export function DistrictPicker({ onConfirm }: Props) {
       </button>
 
       <p className="text-xs text-gray-400 text-center">
-        Exact location is never stored unless you opt in above. By default only district-level data is recorded.
+        Location is required for public map quality. Coordinates are rounded to roughly 110 m before storage.
       </p>
     </div>
   );
+}
+
+function detectConnectionType(type?: string): ConnectionType | null {
+  if (type === 'cellular') return 'mobile';
+  if (type === 'ethernet') return 'wired';
+  if (type === 'wifi') return 'wifi';
+  return null;
+}
+
+function inferDistrict(lat: number, lng: number): string {
+  return Object.entries(DISTRICT_LATLNG)
+    .map(([district, [districtLng, districtLat]]) => ({
+      district,
+      distance: haversineKm(lat, lng, districtLat, districtLng),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0].district;
+}
+
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const earthKm = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthKm * Math.asin(Math.sqrt(a));
 }

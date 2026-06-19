@@ -72,7 +72,7 @@ export function SpeedTest() {
     return niceAxis(maxBps || 100_000_000);
   }, [uploadPoints]);
 
-  const handleStart = async (d: string, ct: ConnectionType, c: GeoCoords | null) => {
+  const handleStart = async (d: string, ct: ConnectionType, c: GeoCoords) => {
     setDistrict(d);
     setConnType(ct);
     setCoords(c);
@@ -92,9 +92,13 @@ export function SpeedTest() {
     setResultSubmitted(true);
 
     const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
-    if (!apiBase || !district) return;
+    if (!apiBase || !district || !coords) return;
 
     try {
+      const nav = navigator as Navigator & {
+        connection?: { effectiveType?: string };
+      };
+
       await fetch(`${apiBase}/v1/results`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -103,12 +107,11 @@ export function SpeedTest() {
           scores,
           client: {
             connectionType: connType,
+            effectiveType: nav.connection?.effectiveType,
             userAgent: navigator.userAgent,
           },
-          location: coords
-            ? { district, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM }
-            : { district },
-          consent: { sharePublicly: true, shareExactLocation: !!coords },
+          location: { district, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM },
+          consent: { sharePublicly: true, shareExactLocation: true },
         }),
       });
     } catch {
