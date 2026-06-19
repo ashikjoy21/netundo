@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { Metadata } from 'next';
+import { SpeedMap } from '@/components/landing/SpeedMap';
 
 const DISTRICTS = [
   'Thiruvananthapuram', 'Kollam', 'Pathanamthitta', 'Alappuzha', 'Kottayam',
@@ -61,6 +61,16 @@ export default function KeralaPage() {
         </p>
       </div>
 
+      <SpeedMap />
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">District-wise performance</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Compare download speed, latency, and ISP samples after exploring the live map.
+          </p>
+        </div>
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <select
@@ -103,6 +113,7 @@ export default function KeralaPage() {
           ))}
         </div>
       )}
+      </section>
 
       {/* ISP table */}
       <section>
