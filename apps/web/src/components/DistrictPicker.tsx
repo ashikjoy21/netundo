@@ -15,8 +15,17 @@ export interface GeoCoords {
 }
 
 interface Props {
-  onConfirm: (district: string, connectionType: ConnectionType, coords: GeoCoords | null, localArea: string) => void;
+  onConfirm: (
+    district: string,
+    connectionType: ConnectionType,
+    coords: GeoCoords | null,
+    localArea: string,
+    planMbps: number | null,
+  ) => void;
 }
+
+const PLAN_PRESETS = [40, 50, 100, 200, 300];
+const PLAN_STORAGE_KEY = 'netundo:planMbps';
 
 const CONN_META: Record<ConnectionType, { label: string; Icon: typeof Wifi }> = {
   mobile: { label: 'Mobile', Icon: Smartphone },
@@ -32,7 +41,21 @@ export function DistrictPicker({ onConfirm }: Props) {
   const [manualMode, setManualMode] = useState(false);
   const [taluk, setTaluk] = useState('');
   const [localArea, setLocalArea] = useState('');
+  const [planMbps, setPlanMbps] = useState<number | null>(null);
   const [geoState, setGeoState] = useState<'idle' | 'locating' | 'denied' | 'timeout' | 'unavailable' | 'unsupported'>('idle');
+
+  // Remember the user's advertised plan between visits/retests — most people
+  // keep the same connection, so prefilling removes friction.
+  useEffect(() => {
+    const saved = Number(localStorage.getItem(PLAN_STORAGE_KEY));
+    if (Number.isFinite(saved) && saved > 0) setPlanMbps(saved);
+  }, []);
+
+  const choosePlan = (value: number | null) => {
+    setPlanMbps(value);
+    if (value && value > 0) localStorage.setItem(PLAN_STORAGE_KEY, String(value));
+    else localStorage.removeItem(PLAN_STORAGE_KEY);
+  };
 
   // Browser support is partial: Chrome Android can expose cellular/ethernet/wifi,
   // while Safari/iOS usually hides the physical connection type.
@@ -244,8 +267,55 @@ export function DistrictPicker({ onConfirm }: Props) {
         </p>
       </div>
 
+      {/* Advertised plan speed (optional) */}
+      <div>
+        <div className="mb-1.5 flex items-center justify-between gap-3">
+          <label className="block text-sm font-medium text-gray-700">
+            What speed does your plan advertise?
+          </label>
+          <span className="text-xs text-gray-400">Optional</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {PLAN_PRESETS.map((value) => {
+            const active = planMbps === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => choosePlan(active ? null : value)}
+                className={`rounded-full border px-3 py-1.5 text-sm font-medium transition-all ${
+                  active
+                    ? 'border-cf-orange bg-cf-orange text-white'
+                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                {value} Mbps
+              </button>
+            );
+          })}
+          <div className="flex items-center gap-1 rounded-full border border-gray-200 px-3 py-1 focus-within:border-cf-orange">
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              placeholder="Other"
+              value={planMbps && !PLAN_PRESETS.includes(planMbps) ? planMbps : ''}
+              onChange={(event) => {
+                const next = parseInt(event.target.value, 10);
+                choosePlan(Number.isFinite(next) && next > 0 ? next : null);
+              }}
+              className="w-16 bg-transparent text-sm text-gray-700 focus:outline-none"
+            />
+            <span className="text-xs text-gray-400">Mbps</span>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-gray-400">
+          We&apos;ll show how much of your paid speed you&apos;re actually getting right now.
+        </p>
+      </div>
+
       <button
-        onClick={() => ready && onConfirm(district, connType, coords, taluk && localArea ? `${taluk} / ${localArea}` : '')}
+        onClick={() => ready && onConfirm(district, connType, coords, taluk && localArea ? `${taluk} / ${localArea}` : '', planMbps)}
         disabled={!ready}
         className="w-full py-3 rounded-lg bg-cf-orange text-white font-semibold text-sm transition-all hover:bg-cf-orange-dark disabled:opacity-40 disabled:cursor-not-allowed"
       >

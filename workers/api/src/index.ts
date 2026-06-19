@@ -74,6 +74,9 @@ interface ResultPayload {
     lng?: number;
     accuracyM?: number;
   };
+  plan?: {
+    advertisedMbps?: number;
+  };
   consent: {
     sharePublicly: boolean;
     shareExactLocation: boolean;
@@ -256,7 +259,14 @@ async function handlePostResult(
 
   // --- Build DB row ---
   const id = uuidv4();
-  const { summary, scores, client, location, consent } = payload;
+  const { summary, scores, client, location, plan, consent } = payload;
+
+  const planMbps =
+    typeof plan?.advertisedMbps === 'number' &&
+    plan.advertisedMbps > 0 &&
+    plan.advertisedMbps <= 10000
+      ? plan.advertisedMbps
+      : null;
 
   // Convert bps -> Mbps; keep null when absent
   const bpsToMbps = (v?: number) =>
@@ -290,6 +300,10 @@ async function handlePostResult(
     isp_name: ispOrg,
     isp_org: ispOrg,
     asn,
+
+    // Advertised plan speed (user-reported). Only included when present so that
+    // inserts keep working even before the plan_mbps migration is applied.
+    ...(planMbps != null ? { plan_mbps: planMbps } : {}),
 
     // Kerala location
     district: location.district,

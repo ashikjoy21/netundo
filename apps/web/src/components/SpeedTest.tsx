@@ -33,6 +33,7 @@ export function SpeedTest() {
   const [connType, setConnType] = useState<ConnectionType>('wifi');
   const [coords, setCoords] = useState<GeoCoords | null>(null);
   const [localArea, setLocalArea] = useState('');
+  const [planMbps, setPlanMbps] = useState<number | null>(null);
   const [resultSubmitted, setResultSubmitted] = useState(false);
 
   const {
@@ -79,11 +80,12 @@ export function SpeedTest() {
     return niceAxis(maxBps || 100_000_000);
   }, [uploadPoints]);
 
-  const handleStart = async (d: string, ct: ConnectionType, c: GeoCoords | null, area: string) => {
+  const handleStart = async (d: string, ct: ConnectionType, c: GeoCoords | null, area: string, plan: number | null) => {
     setDistrict(d);
     setConnType(ct);
     setCoords(c);
     setLocalArea(area);
+    setPlanMbps(plan);
     setAppState('testing');
     setResultSubmitted(false);
     await start();
@@ -124,6 +126,7 @@ export function SpeedTest() {
           location: coords
             ? { district, taluk: localArea || undefined, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM }
             : { district, taluk: localArea || undefined },
+          plan: planMbps ? { advertisedMbps: planMbps } : undefined,
           consent: { sharePublicly: true, shareExactLocation: !!coords },
         }),
       });
@@ -259,6 +262,7 @@ export function SpeedTest() {
               area={localArea}
               connectionType={connType}
               networkLabel={networkLabel}
+              planMbps={planMbps}
             />
           )}
 
@@ -269,6 +273,11 @@ export function SpeedTest() {
           )}
         </div>
       </section>
+
+      {/* ── Plan vs reality ── */}
+      {isDone && planMbps && typeof summary.download === 'number' && (
+        <PlanVsReality planMbps={planMbps} downloadMbps={(summary.download as number) / 1_000_000} />
+      )}
 
       {/* ── Network Quality Score ── */}
       <NetworkQuality scores={isDone ? scores : null} />
@@ -507,6 +516,73 @@ function MetricStat({
   );
 }
 
+function PlanVsReality({ planMbps, downloadMbps }: { planMbps: number; downloadMbps: number }) {
+  const pct = Math.round((downloadMbps / planMbps) * 100);
+  const v = planVerdict(pct);
+  const barPct = Math.min(100, Math.max(2, pct));
+
+  return (
+    <section className={`rounded-2xl border ${v.border} ${v.bg} p-5 sm:p-6`}>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-gray-700">Are you getting what you pay for?</h3>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${v.badge}`}>{v.tag}</span>
+      </div>
+
+      <div className="mt-3 flex items-end gap-2">
+        <span className={`text-5xl font-extrabold leading-none ${v.text}`}>{pct}%</span>
+        <span className="mb-1 text-sm font-medium text-gray-500">of your {planMbps} Mbps plan</span>
+      </div>
+
+      <div className="mt-4 h-3 w-full overflow-hidden rounded-full bg-white/70 ring-1 ring-inset ring-black/5">
+        <div className={`h-full rounded-full ${v.fill} transition-all`} style={{ width: `${barPct}%` }} />
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 text-sm">
+        <span className="text-gray-500">
+          Advertised <strong className="text-gray-800">{planMbps} Mbps</strong>
+          <span className="mx-2 text-gray-300">·</span>
+          Delivered now <strong className="text-gray-800">{downloadMbps.toFixed(1)} Mbps</strong>
+        </span>
+        <span className={`font-medium ${v.text}`}>{v.message}</span>
+      </div>
+    </section>
+  );
+}
+
+function planVerdict(pct: number) {
+  if (pct >= 80) {
+    return {
+      tag: 'On plan',
+      message: "You're getting what you pay for.",
+      text: 'text-green-700',
+      bg: 'bg-green-50',
+      border: 'border-green-200',
+      badge: 'bg-green-600 text-white',
+      fill: 'bg-green-500',
+    };
+  }
+  if (pct >= 50) {
+    return {
+      tag: 'Below plan',
+      message: 'A bit under your advertised speed.',
+      text: 'text-amber-700',
+      bg: 'bg-amber-50',
+      border: 'border-amber-200',
+      badge: 'bg-amber-500 text-white',
+      fill: 'bg-amber-500',
+    };
+  }
+  return {
+    tag: 'Underdelivering',
+    message: 'Well below what your plan promises.',
+    text: 'text-red-700',
+    bg: 'bg-red-50',
+    border: 'border-red-200',
+    badge: 'bg-red-600 text-white',
+    fill: 'bg-red-500',
+  };
+}
+
 function ActionBtn({ onClick, icon, label }: { onClick: () => void; icon: string; label: string }) {
   return (
     <button
@@ -525,14 +601,20 @@ function ShareButton({
   area,
   connectionType,
   networkLabel,
+  planMbps,
 }: {
   summary: Record<string, unknown>;
   district: string;
   area: string;
   connectionType: ConnectionType;
   networkLabel: string;
+  planMbps: number | null;
 }) {
-  const text = `My internet speed in ${area ? `${area}, ` : ''}${district} on ${networkLabel}: ${formatMbps(summary.download as number)} Mbps ↓ ${formatMbps(summary.upload as number)} Mbps ↑ ${formatMs(summary.latency as number)} ms latency via netundo.in`;
+  const planPct = planMbps && typeof summary.download === 'number'
+    ? Math.round(((summary.download as number) / 1_000_000 / planMbps) * 100)
+    : null;
+  const planDelivery = planPct != null ? `${planPct}% of ${planMbps} Mbps plan` : null;
+  const text = `My internet speed in ${area ? `${area}, ` : ''}${district} on ${networkLabel}: ${formatMbps(summary.download as number)} Mbps ↓ ${formatMbps(summary.upload as number)} Mbps ↑ ${formatMs(summary.latency as number)} ms latency${planDelivery ? ` (${planDelivery})` : ''} via netundo.in`;
 
   return (
     <button
@@ -546,6 +628,7 @@ function ShareButton({
           area,
           connectionType,
           networkLabel,
+          planDelivery,
         });
 
         if (file && navigator.share && canShareFile(file)) {
@@ -579,6 +662,7 @@ async function createShareCard({
   area,
   connectionType,
   networkLabel,
+  planDelivery,
 }: {
   downloadMbps: string;
   uploadMbps: string;
@@ -588,6 +672,7 @@ async function createShareCard({
   area: string;
   connectionType: ConnectionType;
   networkLabel: string;
+  planDelivery: string | null;
 }): Promise<File | null> {
   const canvas = document.createElement('canvas');
   canvas.width = 1200;
@@ -686,6 +771,28 @@ async function createShareCard({
   ctx.fillStyle = faint;
   ctx.font = '600 22px Inter, system-ui, sans-serif';
   ctx.fillText('download', contentX + dlWidth + 14, 340);
+
+  // Plan-delivery badge, right-aligned beside the hero number
+  if (planDelivery) {
+    ctx.font = '800 26px Inter, system-ui, sans-serif';
+    const badgeText = planDelivery;
+    const padX = 26;
+    const badgeW = ctx.measureText(badgeText).width + padX * 2;
+    const badgeH = 60;
+    const badgeX = contentRight - badgeW;
+    const badgeY = 300;
+    ctx.fillStyle = '#fff1e8';
+    roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 30);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 79, 22, 0.25)';
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 30);
+    ctx.stroke();
+    ctx.fillStyle = orangeDark;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(badgeText, badgeX + padX, badgeY + badgeH / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
+  }
 
   // Metric pills, evenly spaced across the panel
   const gap = 24;
