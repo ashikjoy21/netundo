@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "deploy": "NEXT_PUBLIC_API_WORKER_URL=https://netundo-api.ashikjoy21.workers.dev pnpm build && wrangler pages deploy out --project-name netundo --commit-dirty=true"
+    "deploy": "NEXT_PUBLIC_API_WORKER_URL=https://api.netundo.com pnpm build && wrangler pages deploy out --project-name netundo --commit-dirty=true"
   },
   "dependencies": {
     "@cloudflare/speedtest": "^1.10.1",
