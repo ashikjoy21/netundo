@@ -36,15 +36,8 @@ function Header() {
     <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-5xl flex-col gap-2 px-3 py-2 sm:h-12 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-0">
         <div className="flex min-w-0 items-center justify-between gap-3">
-          <a href="/" className="flex min-w-0 items-center gap-2">
-          {/* Speedtest icon */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0 text-cf-orange">
-            <path d="M12 2a10 10 0 110 20A10 10 0 0112 2z" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M12 12L7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            <path d="M12 12l4-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            <circle cx="12" cy="12" r="1.5" fill="currentColor" />
-          </svg>
-            <span className="truncate text-base font-bold text-gray-900">netundo</span>
+          <a href="/" aria-label="netundo home" className="flex min-w-0 items-center">
+            <Wordmark />
           </a>
           <a href="/test" className="shrink-0 rounded-full bg-cf-orange px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cf-orange-dark sm:hidden">
             Test Speed
@@ -137,7 +130,44 @@ function Footer() {
           </div>
         </div>
       </div>
+      <div className="-mx-1 mt-6 border-t border-neutral-800 bg-[#10100f] px-5 py-9 text-white sm:-mx-2 sm:mt-8 sm:px-6 sm:py-10">
+        <div className="mx-auto flex max-w-[1260px] flex-col gap-7 md:flex-row md:items-center md:justify-between">
+          <div>
+            <a href="/" aria-label="netundo home" className="inline-flex items-center">
+              <Wordmark inverse size="sm" />
+            </a>
+            <p className="mt-3 max-w-md text-xs leading-6 text-neutral-400">
+              Crowdsourced Kerala network quality data, powered by Cloudflare&apos;s measurement engine.
+            </p>
+          </div>
+          <nav className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+            <a href="/" className="text-neutral-300 transition-colors hover:text-white">Home</a>
+            <a href="/test" className="text-neutral-300 transition-colors hover:text-white">Speed Test</a>
+            <a href="/kerala" className="text-neutral-300 transition-colors hover:text-white">Kerala Map</a>
+            <a href="/charts" className="text-neutral-300 transition-colors hover:text-white">Top Charts</a>
+            <a href="/about" className="text-neutral-300 transition-colors hover:text-white">About</a>
+            <a href="/methodology" className="text-neutral-300 transition-colors hover:text-white">Methodology</a>
+            <a href="/privacy" className="text-neutral-300 transition-colors hover:text-white">Privacy</a>
+          </nav>
+        </div>
+        <div className="mx-auto mt-7 flex max-w-[1260px] flex-col gap-2 border-t border-white/10 pt-5 text-xs text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
+          <span>Open source · MIT · Community data, not an ISP certification.</span>
+          <span>© {new Date().getFullYear()} netundo</span>
+        </div>
+      </div>
     </footer>
+  );
+}
+
+function Wordmark({ inverse = false, size = 'md' }: { inverse?: boolean; size?: 'sm' | 'md' }) {
+  const textSize = size === 'sm' ? 'text-xl' : 'text-2xl sm:text-[1.7rem]';
+  const netColor = inverse ? 'text-white' : 'text-[#171d2b]';
+
+  return (
+    <span className={`inline-flex items-baseline font-black leading-none tracking-[-0.095em] ${textSize}`}>
+      <span className={netColor}>net</span>
+      <span className="text-cf-orange">undo</span>
+    </span>
   );
 }
 
