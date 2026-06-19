@@ -24,10 +24,10 @@ const CONN_META: Record<ConnectionType, { label: string; Icon: typeof Wifi }> = 
 
 export function DistrictPicker({ onConfirm }: Props) {
   const [district, setDistrict] = useState('');
-  const [connType, setConnType] = useState<ConnectionType | ''>('');
+  const [connType, setConnType] = useState<ConnectionType | ''>('wifi');
   const [detectedConnType, setDetectedConnType] = useState<ConnectionType | null>(null);
   const [coords, setCoords] = useState<GeoCoords | null>(null);
-  const [geoState, setGeoState] = useState<'idle' | 'locating' | 'denied' | 'unsupported'>('idle');
+  const [geoState, setGeoState] = useState<'idle' | 'locating' | 'denied' | 'timeout' | 'unavailable' | 'unsupported'>('idle');
 
   // Browser support is partial: Chrome Android can expose cellular/ethernet/wifi,
   // while Safari/iOS usually hides the physical connection type.
@@ -59,12 +59,16 @@ export function DistrictPicker({ onConfirm }: Props) {
         setDistrict(inferDistrict(pos.coords.latitude, pos.coords.longitude));
         setGeoState('idle');
       },
-      () => {
+      (error) => {
         setCoords(null);
         setDistrict('');
-        setGeoState('denied');
+        if (error.code === error.PERMISSION_DENIED) setGeoState('denied');
+        else if (error.code === error.TIMEOUT) setGeoState('timeout');
+        else setGeoState('unavailable');
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+      // Approximate location is enough to infer district and is much more reliable
+      // on phones than forcing GPS/high-accuracy mode.
+      { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 },
     );
   };
 
@@ -102,13 +106,7 @@ export function DistrictPicker({ onConfirm }: Props) {
             {coords ? `Detected ${district}` : 'Use my current location'}
           </span>
           <span className="block text-xs text-gray-500 mt-1 leading-5">
-            {geoState === 'denied'
-              ? 'Location permission is required to run a public Kerala test.'
-              : geoState === 'unsupported'
-              ? 'This browser does not support location access.'
-              : coords
-              ? `Accuracy about ${coords.accuracyM ?? '?'} m. Stored rounded for privacy.`
-              : 'Your browser will ask for permission. We infer district from your coordinates.'}
+            {locationMessage(geoState, coords)}
           </span>
         </span>
       </button>
@@ -142,7 +140,7 @@ export function DistrictPicker({ onConfirm }: Props) {
           })}
         </div>
         <p className="mt-2 text-xs text-gray-400">
-          Browsers do not always reveal Wi-Fi vs mobile. If this was not detected correctly, choose the right one.
+          Browsers do not always reveal Wi-Fi vs mobile. Wi-Fi is selected by default; change it if you are on mobile data or wired internet.
         </p>
       </div>
 
@@ -159,6 +157,16 @@ export function DistrictPicker({ onConfirm }: Props) {
       </p>
     </div>
   );
+}
+
+function locationMessage(geoState: 'idle' | 'locating' | 'denied' | 'timeout' | 'unavailable' | 'unsupported', coords: GeoCoords | null): string {
+  if (geoState === 'locating') return 'Getting approximate location from your phone...';
+  if (geoState === 'denied') return 'Location permission is blocked. Allow location for this site in browser settings and try again.';
+  if (geoState === 'timeout') return 'Location timed out. Turn on phone location/GPS and try again.';
+  if (geoState === 'unavailable') return 'Your phone could not provide location right now. Check location services and try again.';
+  if (geoState === 'unsupported') return 'This browser does not support location access.';
+  if (coords) return `Detected with about ${coords.accuracyM ?? '?'} m accuracy. Stored rounded for privacy.`;
+  return 'Your browser will ask for permission. We infer district from your coordinates.';
 }
 
 function detectConnectionType(type?: string): ConnectionType | null {
