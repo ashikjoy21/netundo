@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { useSpeedTest } from '@/hooks/useSpeedTest';
 import { SpeedChart } from './SpeedChart';
 import { NetworkQuality } from './NetworkQuality';
@@ -13,7 +14,15 @@ import {
   groupBandwidthBySize,
   computeBoxStats,
   niceAxis,
+  COLO_LATLNG,
+  DISTRICT_LATLNG,
 } from '@/lib/utils';
+
+// MapLibre is browser-only — load it client-side with a skeleton fallback.
+const ServerLocationMap = dynamic(() => import('./ServerLocationMap'), {
+  ssr: false,
+  loading: () => <div className="h-full w-full bg-gray-100 rounded-lg animate-pulse" />,
+});
 
 type AppState = 'setup' | 'testing' | 'done';
 
@@ -245,12 +254,13 @@ export function SpeedTest() {
         <section className="space-y-3">
           <SectionHeader title="Server Location" />
           <div className="border border-gray-200 rounded-xl bg-white p-4 space-y-2.5">
-            <div className="h-28 bg-gray-100 rounded-lg flex items-center justify-center mb-3">
-              <span className="text-gray-400 text-sm">
-                {edgeCity || edgeColo
-                  ? `📍 ${edgeCity ?? 'Cloudflare'}${edgeColo ? ` (${edgeColo})` : ''}`
-                  : 'Locating edge…'}
-              </span>
+            <div className="h-56 rounded-lg overflow-hidden mb-3 bg-gray-100">
+              <ServerLocationMap
+                client={district ? DISTRICT_LATLNG[district] ?? null : null}
+                server={edgeColo ? COLO_LATLNG[edgeColo] ?? null : null}
+                clientLabel={district ? `You — ${district}` : 'You'}
+                serverLabel={edgeCity ? `Cloudflare ${edgeCity}${edgeColo ? ` (${edgeColo})` : ''}` : 'Cloudflare edge'}
+              />
             </div>
             <InfoRow icon="🌐" label="Connected via" value="IPv4" />
             <InfoRow

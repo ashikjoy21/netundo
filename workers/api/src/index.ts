@@ -375,6 +375,74 @@ async function handleGetResult(id: string, env: Env): Promise<Response> {
   return jsonResponse(rows[0]);
 }
 
+/** Percentile on a sorted numeric array (linear interpolation). */
+function percentile(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  const idx = (sorted.length - 1) * p;
+  const lower = Math.floor(idx);
+  const upper = Math.ceil(idx);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (idx - lower);
+}
+
+interface TestResultRow {
+  district: string;
+  isp_name: string | null;
+  connection_type: string;
+  download_mbps: number | null;
+  upload_mbps: number | null;
+  latency_ms: number | null;
+  jitter_ms: number | null;
+  created_at: string;
+}
+
+/** Aggregate raw test_results in the worker (materialized view may be stale). */
+function aggregateTestResults(
+  rows: TestResultRow[],
+): Array<{
+  district: string;
+  isp_name: string | null;
+  connection_type: string;
+  sample_count: number;
+  p50_download_mbps: number | null;
+  p90_download_mbps: number | null;
+  p50_upload_mbps: number | null;
+  p90_upload_mbps: number | null;
+  p50_latency_ms: number | null;
+  p50_jitter_ms: number | null;
+}> {
+  const groups = new Map<string, TestResultRow[]>();
+
+  for (const row of rows) {
+    const key = `${row.district}|${row.isp_name ?? ''}|${row.connection_type}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(row);
+    else groups.set(key, [row]);
+  }
+
+  return [...groups.entries()].map(([, bucket]) => {
+    const nums = (field: keyof TestResultRow) =>
+      bucket
+        .map((r) => r[field])
+        .filter((v): v is number => typeof v === 'number')
+        .sort((a, b) => a - b);
+
+    const first = bucket[0];
+    return {
+      district: first.district,
+      isp_name: first.isp_name,
+      connection_type: first.connection_type,
+      sample_count: bucket.length,
+      p50_download_mbps: percentile(nums('download_mbps'), 0.5),
+      p90_download_mbps: percentile(nums('download_mbps'), 0.9),
+      p50_upload_mbps: percentile(nums('upload_mbps'), 0.5),
+      p90_upload_mbps: percentile(nums('upload_mbps'), 0.9),
+      p50_latency_ms: percentile(nums('latency_ms'), 0.5),
+      p50_jitter_ms: percentile(nums('jitter_ms'), 0.5),
+    };
+  });
+}
+
 /** GET /v1/aggregate */
 async function handleAggregate(url: URL, env: Env): Promise<Response> {
   const supabase = makeSupabase(env);
@@ -385,45 +453,39 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
     );
   }
 
-  const params = new URLSearchParams({ select: '*' });
-
   const district = url.searchParams.get('district');
   const isp = url.searchParams.get('isp');
   const connectionType = url.searchParams.get('connection_type');
   const period = url.searchParams.get('period'); // 'weekly' | 'monthly'
 
+  const days = period === 'monthly' ? 28 : 7;
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const params = new URLSearchParams({
+    select: 'district,isp_name,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at',
+    is_outlier: 'eq.false',
+    created_at: `gte.${cutoff}`,
+    order: 'created_at.desc',
+    limit: '2000',
+  });
+
   if (district) params.set('district', `eq.${district}`);
   if (isp) params.set('isp_name', `eq.${isp}`);
   if (connectionType) params.set('connection_type', `eq.${connectionType}`);
 
-  // The materialized view stores week-truncated dates; for monthly we rely on
-  // the caller grouping multiple weeks, or a future monthly view.
-  if (period === 'monthly') {
-    // Return last ~4 weeks
-    const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
-    params.set('period', `gte.${cutoff}`);
-  } else if (period === 'weekly' || !period) {
-    // Default: last week
-    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
-    params.set('period', `gte.${cutoff}`);
-  }
-
-  // Limit sensible result set size
-  params.set('limit', '500');
-
-  const res = await supabase(`aggregate_district_isp?${params}`);
+  const res = await supabase(`test_results?${params}`);
 
   if (!res.ok) {
     console.error('Supabase aggregate error', res.status);
     return jsonResponse({ error: 'Failed to fetch aggregates' }, 502);
   }
 
-  const data = await res.json();
-  return jsonResponse(data);
+  const rows = (await res.json()) as TestResultRow[];
+  if (!Array.isArray(rows)) {
+    return jsonResponse({ error: 'Invalid aggregate response' }, 502);
+  }
+
+  return jsonResponse(aggregateTestResults(rows));
 }
 
 // ---------------------------------------------------------------------------
