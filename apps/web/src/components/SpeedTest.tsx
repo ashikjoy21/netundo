@@ -6,7 +6,7 @@ import { useSpeedTest } from '@/hooks/useSpeedTest';
 import { SpeedChart } from './SpeedChart';
 import { NetworkQuality } from './NetworkQuality';
 import { BoxPlotRow, LatencyBoxPlotRow } from './BoxPlot';
-import { DistrictPicker, type ConnectionType } from './DistrictPicker';
+import { DistrictPicker, type ConnectionType, type GeoCoords } from './DistrictPicker';
 import {
   formatMbps,
   formatMs,
@@ -30,6 +30,7 @@ export function SpeedTest() {
   const [appState, setAppState] = useState<AppState>('setup');
   const [district, setDistrict] = useState('');
   const [connType, setConnType] = useState<ConnectionType>('wifi');
+  const [coords, setCoords] = useState<GeoCoords | null>(null);
   const [resultSubmitted, setResultSubmitted] = useState(false);
 
   const {
@@ -71,9 +72,10 @@ export function SpeedTest() {
     return niceAxis(maxBps || 100_000_000);
   }, [uploadPoints]);
 
-  const handleStart = async (d: string, ct: ConnectionType) => {
+  const handleStart = async (d: string, ct: ConnectionType, c: GeoCoords | null) => {
     setDistrict(d);
     setConnType(ct);
+    setCoords(c);
     setAppState('testing');
     setResultSubmitted(false);
     await start();
@@ -103,8 +105,10 @@ export function SpeedTest() {
             connectionType: connType,
             userAgent: navigator.userAgent,
           },
-          location: { district },
-          consent: { sharePublicly: true, shareExactLocation: false },
+          location: coords
+            ? { district, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM }
+            : { district },
+          consent: { sharePublicly: true, shareExactLocation: !!coords },
         }),
       });
     } catch {

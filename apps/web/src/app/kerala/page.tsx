@@ -154,7 +154,7 @@ export default function KeralaPage() {
           </p>
         </div>
         <a
-          href="/"
+          href="/test"
           className="shrink-0 px-5 py-2.5 rounded-lg bg-cf-orange text-white text-sm font-semibold hover:bg-cf-orange-dark transition-colors"
         >
           Run Speed Test
@@ -197,7 +197,7 @@ function EmptyState() {
   return (
     <div className="text-center py-16 border border-gray-200 rounded-xl">
       <p className="text-gray-400 text-sm">No data yet — be the first to test in Kerala!</p>
-      <a href="/" className="mt-3 inline-block text-cf-orange text-sm font-medium hover:underline">
+      <a href="/test" className="mt-3 inline-block text-cf-orange text-sm font-medium hover:underline">
         Run a speed test →
       </a>
     </div>

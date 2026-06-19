@@ -49,6 +49,9 @@ function Header() {
         <nav className="flex items-center gap-4">
           <a href="/kerala" className="text-sm text-gray-500 hover:text-gray-800 transition-colors">Kerala Map</a>
           <a href="/about" className="text-sm text-gray-500 hover:text-gray-800 transition-colors">About</a>
+          <a href="/test" className="rounded-full bg-cf-orange px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-cf-orange-dark">
+            Test Speed
+          </a>
         </nav>
       </div>
     </header>

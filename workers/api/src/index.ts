@@ -243,9 +243,15 @@ async function handlePostResult(
   }
 
   // --- Server-side enrichment from Cloudflare metadata ---
+  // Trustworthy ISP detection: read from request.cf at the edge (the client can't
+  // spoof it). The correct field is `asOrganization` (e.g. "Peak Air Pvt Ltd");
+  // `organization` is not a populated cf field, so it was always null before.
   const cf = request.cf as Record<string, unknown> | undefined;
   const asn = typeof cf?.asn === 'number' ? cf.asn : null;
-  const ispOrg = typeof cf?.organization === 'string' ? cf.organization : null;
+  const ispOrg =
+    (typeof cf?.asOrganization === 'string' && cf.asOrganization) ||
+    (typeof cf?.organization === 'string' && cf.organization) ||
+    null;
   const colo = typeof cf?.colo === 'string' ? cf.colo : null;
 
   // --- Build DB row ---
@@ -288,13 +294,21 @@ async function handlePostResult(
     // Kerala location
     district: location.district,
     taluk: location.taluk ?? null,
-    // PostGIS geography point — only stored when consent given
-    location:
-      consent.shareExactLocation &&
-      typeof location.lat === 'number' &&
-      typeof location.lng === 'number'
-        ? `POINT(${location.lng} ${location.lat})`
-        : null,
+    // Exact location only stored on explicit consent, rounded to ~110 m for privacy.
+    ...(() => {
+      const shareExact =
+        consent.shareExactLocation &&
+        typeof location.lat === 'number' &&
+        typeof location.lng === 'number';
+      const round3 = (v: number) => Math.round(v * 1000) / 1000;
+      return shareExact
+        ? {
+            lat: round3(location.lat as number),
+            lng: round3(location.lng as number),
+            location: `POINT(${round3(location.lng as number)} ${round3(location.lat as number)})`,
+          }
+        : { lat: null, lng: null, location: null };
+    })(),
     location_accuracy_m: location.accuracyM ?? null,
 
     // Edge server
@@ -388,6 +402,7 @@ function percentile(sorted: number[], p: number): number | null {
 interface TestResultRow {
   district: string;
   isp_name: string | null;
+  asn: number | null;
   connection_type: string;
   download_mbps: number | null;
   upload_mbps: number | null;
@@ -396,11 +411,29 @@ interface TestResultRow {
   created_at: string;
 }
 
+/** Most frequently occurring non-null isp_name in a bucket (mode), for display. */
+function representativeIspName(rows: TestResultRow[]): string | null {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.isp_name) counts.set(r.isp_name, (counts.get(r.isp_name) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [name, count] of counts) {
+    if (count > bestCount) {
+      best = name;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 /** Aggregate raw test_results in the worker (materialized view may be stale). */
 function aggregateTestResults(
   rows: TestResultRow[],
 ): Array<{
   district: string;
+  asn: number | null;
   isp_name: string | null;
   connection_type: string;
   sample_count: number;
@@ -414,7 +447,9 @@ function aggregateTestResults(
   const groups = new Map<string, TestResultRow[]>();
 
   for (const row of rows) {
-    const key = `${row.district}|${row.isp_name ?? ''}|${row.connection_type}`;
+    // Group by ASN (the stable network identifier), not the display name which
+    // can drift over time.
+    const key = `${row.district}|${row.asn ?? ''}|${row.connection_type}`;
     const bucket = groups.get(key);
     if (bucket) bucket.push(row);
     else groups.set(key, [row]);
@@ -430,7 +465,8 @@ function aggregateTestResults(
     const first = bucket[0];
     return {
       district: first.district,
-      isp_name: first.isp_name,
+      asn: first.asn,
+      isp_name: representativeIspName(bucket),
       connection_type: first.connection_type,
       sample_count: bucket.length,
       p50_download_mbps: percentile(nums('download_mbps'), 0.5),
@@ -455,6 +491,7 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
 
   const district = url.searchParams.get('district');
   const isp = url.searchParams.get('isp');
+  const asn = url.searchParams.get('asn');
   const connectionType = url.searchParams.get('connection_type');
   const period = url.searchParams.get('period'); // 'weekly' | 'monthly'
 
@@ -462,7 +499,7 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
   const params = new URLSearchParams({
-    select: 'district,isp_name,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at',
+    select: 'district,isp_name,asn,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at',
     is_outlier: 'eq.false',
     created_at: `gte.${cutoff}`,
     order: 'created_at.desc',
@@ -470,7 +507,9 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
   });
 
   if (district) params.set('district', `eq.${district}`);
-  if (isp) params.set('isp_name', `eq.${isp}`);
+  // Prefer the stable ASN filter; `isp` (name) kept for backward compatibility.
+  if (asn) params.set('asn', `eq.${asn}`);
+  else if (isp) params.set('isp_name', `eq.${isp}`);
   if (connectionType) params.set('connection_type', `eq.${connectionType}`);
 
   const res = await supabase(`test_results?${params}`);
@@ -486,6 +525,35 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
   }
 
   return jsonResponse(aggregateTestResults(rows));
+}
+
+/** GET /v1/points — public, located results for the live map. */
+async function handlePoints(url: URL, env: Env): Promise<Response> {
+  const supabase = makeSupabase(env);
+  if (!supabase) {
+    return jsonResponse({ error: 'Supabase not configured' }, 503);
+  }
+
+  const params = new URLSearchParams({
+    select: 'lat,lng,download_mbps,upload_mbps,latency_ms,isp_name,asn,district,connection_type,created_at',
+    consent_public: 'eq.true',
+    is_outlier: 'eq.false',
+    lat: 'not.is.null',
+    order: 'created_at.desc',
+    limit: '500',
+  });
+
+  const connectionType = url.searchParams.get('connection_type');
+  if (connectionType) params.set('connection_type', `eq.${connectionType}`);
+
+  const res = await supabase(`test_results?${params}`);
+  if (!res.ok) {
+    console.error('Supabase points error', res.status);
+    return jsonResponse({ error: 'Failed to fetch points' }, 502);
+  }
+
+  const rows = await res.json();
+  return jsonResponse(Array.isArray(rows) ? rows : []);
 }
 
 // ---------------------------------------------------------------------------
@@ -522,6 +590,11 @@ export default {
     // GET /v1/aggregate
     if (method === 'GET' && path === '/v1/aggregate') {
       return handleAggregate(url, env);
+    }
+
+    // GET /v1/points
+    if (method === 'GET' && path === '/v1/points') {
+      return handlePoints(url, env);
     }
 
     return jsonResponse({ error: 'Not found' }, 404);
