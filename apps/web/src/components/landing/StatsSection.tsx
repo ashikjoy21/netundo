@@ -1,21 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Trophy, Gauge } from 'lucide-react';
-
-interface AggRow {
-  district: string;
-  asn: number | null;
-  isp_name: string | null;
-  connection_type: string;
-  sample_count: number;
-  p50_download_mbps: number | null;
-  p90_download_mbps: number | null;
-  p50_latency_ms: number | null;
-}
+import { ArrowRight, Gamepad2, Gauge, Headphones, Play, Trophy } from 'lucide-react';
+import {
+  formatConnectionType,
+  groupIspScores,
+  scoreNetwork,
+  USE_CASES,
+  type AggregateRow,
+  type ScoredNetwork,
+} from '@/lib/networkScore';
 
 export function StatsSection() {
-  const [rows, setRows] = useState<AggRow[]>([]);
+  const [rows, setRows] = useState<AggregateRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,63 +23,83 @@ export function StatsSection() {
     }
     fetch(`${apiBase}/v1/aggregate?period=monthly`)
       .then((r) => r.json())
-      .then((data: AggRow[]) => setRows(Array.isArray(data) ? data : []))
+      .then((data: AggregateRow[]) => setRows(Array.isArray(data) ? data : []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  // Fastest districts by best p90 download.
+  // Districts ranked by a Cloudflare-inspired quality score, not raw speed alone.
   const districts = useMemo(() => {
-    const byDistrict = new Map<string, { best: number; samples: number; latency: number[] }>();
+    const byDistrict = new Map<string, AggregateRow[]>();
     for (const r of rows) {
-      const cur = byDistrict.get(r.district) ?? { best: 0, samples: 0, latency: [] };
-      cur.best = Math.max(cur.best, r.p90_download_mbps ?? 0);
-      cur.samples += r.sample_count;
-      if (r.p50_latency_ms != null) cur.latency.push(r.p50_latency_ms);
-      byDistrict.set(r.district, cur);
+      const bucket = byDistrict.get(r.district);
+      if (bucket) bucket.push(r);
+      else byDistrict.set(r.district, [r]);
     }
-    return [...byDistrict.entries()]
-      .map(([district, v]) => ({
-        district,
-        best: v.best,
-        samples: v.samples,
-        latency: v.latency.length ? v.latency.reduce((a, b) => a + b, 0) / v.latency.length : null,
-      }))
-      .sort((a, b) => b.best - a.best)
+
+    return [...byDistrict.entries()].map(([district, bucket]) => {
+      const samples = bucket.reduce((sum, row) => sum + row.sample_count, 0);
+      const bestRow = bucket
+        .map((row) => scoreNetwork(row, 'overall'))
+        .sort((a, b) => b.score - a.score)[0];
+      return { ...bestRow, district, samples };
+    })
+      .sort((a, b) => b.score - a.score)
       .slice(0, 6);
   }, [rows]);
 
-  // Top ISPs statewide by median download (grouped by ASN).
   const isps = useMemo(() => {
-    const byIsp = new Map<string, { name: string; downloads: number[]; samples: number }>();
-    for (const r of rows) {
-      const key = String(r.asn ?? r.isp_name ?? 'unknown');
-      const cur = byIsp.get(key) ?? { name: r.isp_name ?? 'Unknown ISP', samples: 0, downloads: [] };
-      if (r.isp_name) cur.name = r.isp_name;
-      if (r.p50_download_mbps != null) cur.downloads.push(r.p50_download_mbps);
-      cur.samples += r.sample_count;
-      byIsp.set(key, cur);
-    }
-    return [...byIsp.values()]
-      .map((v) => ({
-        name: v.name,
-        samples: v.samples,
-        median: v.downloads.length ? v.downloads.reduce((a, b) => a + b, 0) / v.downloads.length : 0,
-      }))
-      .sort((a, b) => b.median - a.median)
-      .slice(0, 5);
+    return groupIspScores(rows, 'overall').slice(0, 5);
   }, [rows]);
+
+  const useCaseLeaders = useMemo(
+    () => USE_CASES.filter((useCase) => useCase.id !== 'overall').slice(0, 3).map((useCase) => ({
+      ...useCase,
+      leader: groupIspScores(rows, useCase.id)[0] ?? null,
+    })),
+    [rows],
+  );
 
   const hasData = rows.length > 0;
 
   return (
-    <section className="grid gap-8 lg:grid-cols-2">
+    <section className="space-y-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cf-orange">Top charts</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-[-0.03em] text-gray-950">Best networks by netundo score</h2>
+          <p className="mt-1 max-w-2xl text-sm text-gray-500">
+            Inspired by Cloudflare AIM scoring: speed, upload, latency, jitter, and sample confidence are blended for each use case.
+          </p>
+        </div>
+        <a href="/charts" className="inline-flex items-center gap-2 text-sm font-semibold text-cf-orange hover:text-cf-orange-dark">
+          View full charts <ArrowRight className="h-4 w-4" />
+        </a>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        {loading ? (
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-32 animate-pulse rounded-2xl bg-gray-100" />
+          ))
+        ) : hasData ? (
+          useCaseLeaders.map((item) => (
+            <UseCaseCard key={item.id} icon={useCaseIcon(item.id)} label={item.shortLabel} leader={item.leader} />
+          ))
+        ) : (
+          <div className="md:col-span-3">
+            <EmptyHint />
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-8 lg:grid-cols-2">
       {/* Fastest districts */}
       <div>
         <h2 className="flex items-center gap-2 text-xl font-bold text-gray-900">
           <Gauge className="h-5 w-5 text-cf-orange" /> Fastest districts
         </h2>
-        <p className="mt-1 text-sm text-gray-500">Best download speed recorded this month.</p>
+        <p className="mt-1 text-sm text-gray-500">Ranked by balanced score, not raw download alone.</p>
 
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
           {loading ? (
@@ -93,12 +110,12 @@ export function StatsSection() {
             districts.map((d) => (
               <div key={d.district} className="rounded-xl border border-gray-200 bg-white p-4">
                 <p className="truncate text-xs font-semibold uppercase tracking-wide text-gray-500">{d.district}</p>
-                <p className={`mt-1 text-2xl font-bold ${speedColor(d.best)}`}>
-                  {d.best.toFixed(0)}
-                  <span className="ml-0.5 text-xs font-normal text-gray-400">Mbps</span>
+                <p className={`mt-1 text-2xl font-bold ${scoreColor(d.score)}`}>
+                  {d.score.toFixed(0)}
+                  <span className="ml-0.5 text-xs font-normal text-gray-400">score</span>
                 </p>
                 <p className="mt-1 text-xs text-gray-400">
-                  {d.latency != null ? `${d.latency.toFixed(0)}ms · ` : ''}
+                  {d.downloadMbps != null ? `${d.downloadMbps.toFixed(0)} Mbps · ` : ''}
                   {d.samples} tests
                 </p>
               </div>
@@ -114,7 +131,7 @@ export function StatsSection() {
         <h2 className="flex items-center gap-2 text-xl font-bold text-gray-900">
           <Trophy className="h-5 w-5 text-cf-orange" /> Top ISPs in Kerala
         </h2>
-        <p className="mt-1 text-sm text-gray-500">Ranked by median download speed.</p>
+        <p className="mt-1 text-sm text-gray-500">Ranked by netundo score for real-world quality.</p>
 
         <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
           {loading ? (
@@ -122,14 +139,18 @@ export function StatsSection() {
           ) : hasData ? (
             <ul className="divide-y divide-gray-100">
               {isps.map((isp, i) => (
-                <li key={isp.name} className="flex items-center gap-3 px-4 py-3">
+                <li key={isp.key} className="flex items-center gap-3 px-4 py-3">
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-cf-orange/10 text-xs font-semibold text-cf-orange">
                     {i + 1}
                   </span>
-                  <span className="flex-1 truncate text-sm font-medium text-gray-800">{isp.name}</span>
-                  <span className="text-xs text-gray-400">{isp.samples} tests</span>
-                  <span className={`w-20 text-right text-sm font-semibold ${speedColor(isp.median)}`}>
-                    {isp.median.toFixed(0)} Mbps
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-gray-800">{isp.name}</span>
+                    <span className="text-xs text-gray-400">
+                      {isp.downloadMbps?.toFixed(0) ?? '—'} Mbps · {isp.latencyMs?.toFixed(0) ?? '—'} ms · {isp.samples} tests
+                    </span>
+                  </div>
+                  <span className={`w-20 text-right text-sm font-semibold ${scoreColor(isp.score)}`}>
+                    {isp.score.toFixed(0)}
                   </span>
                 </li>
               ))}
@@ -141,13 +162,55 @@ export function StatsSection() {
           )}
         </div>
       </div>
+      </div>
     </section>
   );
 }
 
-function speedColor(v: number): string {
-  if (v >= 50) return 'text-cf-green';
-  if (v >= 20) return 'text-yellow-600';
+function UseCaseCard({
+  icon,
+  label,
+  leader,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  leader: ScoredNetwork | null;
+}) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-gray-900">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-cf-orange/10 text-cf-orange">
+            {icon}
+          </span>
+          Best for {label}
+        </span>
+        {leader && <span className={`text-xl font-bold ${scoreColor(leader.score)}`}>{leader.score.toFixed(0)}</span>}
+      </div>
+      {leader ? (
+        <div className="mt-4">
+          <p className="truncate text-base font-bold text-gray-950">{leader.name}</p>
+          <p className="mt-1 text-xs text-gray-500">
+            {leader.downloadMbps?.toFixed(0) ?? '—'} Mbps · {leader.latencyMs?.toFixed(0) ?? '—'} ms · {leader.samples} tests
+          </p>
+          <p className="mt-2 text-xs font-medium text-cf-orange">{formatConnectionType(leader.connectionType)} network</p>
+        </div>
+      ) : (
+        <p className="mt-4 text-sm text-gray-400">Waiting for enough public tests.</p>
+      )}
+    </div>
+  );
+}
+
+function useCaseIcon(useCase: string) {
+  if (useCase === 'streaming') return <Play className="h-4 w-4" />;
+  if (useCase === 'gaming') return <Gamepad2 className="h-4 w-4" />;
+  return <Headphones className="h-4 w-4" />;
+}
+
+function scoreColor(v: number): string {
+  if (v >= 72) return 'text-cf-green';
+  if (v >= 58) return 'text-yellow-600';
   return 'text-cf-red';
 }
 
