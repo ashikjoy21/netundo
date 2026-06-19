@@ -31,6 +31,7 @@ export function SpeedTest() {
   const [district, setDistrict] = useState('');
   const [connType, setConnType] = useState<ConnectionType>('wifi');
   const [coords, setCoords] = useState<GeoCoords | null>(null);
+  const [localArea, setLocalArea] = useState('');
   const [resultSubmitted, setResultSubmitted] = useState(false);
 
   const {
@@ -72,10 +73,11 @@ export function SpeedTest() {
     return niceAxis(maxBps || 100_000_000);
   }, [uploadPoints]);
 
-  const handleStart = async (d: string, ct: ConnectionType, c: GeoCoords) => {
+  const handleStart = async (d: string, ct: ConnectionType, c: GeoCoords | null, area: string) => {
     setDistrict(d);
     setConnType(ct);
     setCoords(c);
+    setLocalArea(area);
     setAppState('testing');
     setResultSubmitted(false);
     await start();
@@ -92,7 +94,7 @@ export function SpeedTest() {
     setResultSubmitted(true);
 
     const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
-    if (!apiBase || !district || !coords) return;
+    if (!apiBase || !district) return;
 
     try {
       const nav = navigator as Navigator & {
@@ -110,8 +112,10 @@ export function SpeedTest() {
             effectiveType: nav.connection?.effectiveType,
             userAgent: navigator.userAgent,
           },
-          location: { district, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM },
-          consent: { sharePublicly: true, shareExactLocation: true },
+          location: coords
+            ? { district, taluk: localArea || undefined, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM }
+            : { district, taluk: localArea || undefined },
+          consent: { sharePublicly: true, shareExactLocation: !!coords },
         }),
       });
     } catch {
@@ -245,7 +249,7 @@ export function SpeedTest() {
 
           {isDone && (
             <span className="ml-auto text-xs text-gray-400">
-              Measured at {new Date().toLocaleTimeString()} · {district} · {connType}
+              Measured at {new Date().toLocaleTimeString()} · {localArea ? `${localArea}, ` : ''}{district} · {connType}
             </span>
           )}
         </div>
@@ -282,6 +286,7 @@ export function SpeedTest() {
             />
             <InfoRow icon="🔢" label="Your IP address" value={clientIp || '—'} />
             <InfoRow icon="📍" label="Your district" value={district || '—'} />
+            {localArea && <InfoRow icon="⌖" label="Your area" value={localArea} />}
             <InfoRow icon="📶" label="Connection" value={connType} />
           </div>
         </section>
@@ -430,6 +435,7 @@ export function SpeedTest() {
             <p className="font-semibold text-gray-800 text-sm">Your data helps Kerala!</p>
             <p className="text-sm text-gray-500 mt-0.5">
               Your result for <strong>{district}</strong> has been anonymously added to the Kerala Network Quality Map.
+              {!coords && ' It will count in area/district charts but will not appear as a precise map pin.'}
             </p>
           </div>
           <a
