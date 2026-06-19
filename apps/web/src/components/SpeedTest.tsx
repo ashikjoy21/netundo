@@ -8,6 +8,7 @@ import { SpeedChart } from './SpeedChart';
 import { NetworkQuality } from './NetworkQuality';
 import { BoxPlotRow, LatencyBoxPlotRow } from './BoxPlot';
 import { DistrictPicker, type ConnectionType, type GeoCoords } from './DistrictPicker';
+import { AreaRanking } from './AreaRanking';
 import {
   formatMbps,
   formatMs,
@@ -277,6 +278,11 @@ export function SpeedTest() {
       {/* ── Plan vs reality ── */}
       {isDone && planMbps && typeof summary.download === 'number' && (
         <PlanVsReality planMbps={planMbps} downloadMbps={(summary.download as number) / 1_000_000} />
+      )}
+
+      {/* ── How your network ranks locally ── */}
+      {isDone && district && (
+        <AreaRanking district={district} connectionType={connType} asn={asn} ispName={ispName} />
       )}
 
       {/* ── Network Quality Score ── */}
