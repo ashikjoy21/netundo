@@ -26,7 +26,7 @@ export function SpeedTest() {
   const {
     state: { status, summary, scores, downloadPoints, uploadPoints,
       unloadedLatencyPoints, downLoadedLatencyPoints, upLoadedLatencyPoints,
-      currentPhase, edgeColo, error },
+      currentPhase, edgeColo, edgeCity, asn, ispName, clientIp, error },
     start,
     pause,
     resume,
@@ -184,17 +184,17 @@ export function SpeedTest() {
               label="Latency"
               value={formatMs(summary.latency)}
               unit="ms"
-              sub1={{ label: 'unloaded', value: formatMs(summary.latency), color: '#f97316' }}
-              sub2={{ label: 'loaded', value: formatMs(summary.downLoadedLatency), color: '#7c3aed' }}
-              tooltip="Round-trip time to the test server"
+              sub1={{ label: 'download', value: formatMs(summary.downLoadedLatency), color: '#f6821f' }}
+              sub2={{ label: 'upload', value: formatMs(summary.upLoadedLatency), color: '#7c3aed' }}
+              tooltip="Unloaded round-trip time to the test server. The sub-values show latency measured while the connection is loaded during download (↓) and upload (↑)."
             />
             <MetricStat
               label="Jitter"
               value={formatMs(summary.jitter)}
               unit="ms"
-              sub1={{ label: 'unloaded', value: formatMs(summary.jitter), color: '#f97316' }}
-              sub2={{ label: 'loaded', value: formatMs(summary.downLoadedJitter), color: '#7c3aed' }}
-              tooltip="Variation in latency"
+              sub1={{ label: 'download', value: formatMs(summary.downLoadedJitter), color: '#f6821f' }}
+              sub2={{ label: 'upload', value: formatMs(summary.upLoadedJitter), color: '#7c3aed' }}
+              tooltip="Variation in latency between consecutive pings. Sub-values show jitter while loaded during download (↓) and upload (↑)."
             />
             <MetricStat
               label="Packet Loss"
@@ -239,13 +239,25 @@ export function SpeedTest() {
           <div className="border border-gray-200 rounded-xl bg-white p-4 space-y-2.5">
             <div className="h-28 bg-gray-100 rounded-lg flex items-center justify-center mb-3">
               <span className="text-gray-400 text-sm">
-                {edgeColo ? `📍 Edge: ${edgeColo}` : 'Chennai / Mumbai PoP'}
+                {edgeCity || edgeColo
+                  ? `📍 ${edgeCity ?? 'Cloudflare'}${edgeColo ? ` (${edgeColo})` : ''}`
+                  : 'Locating edge…'}
               </span>
             </div>
             <InfoRow icon="🌐" label="Connected via" value="IPv4" />
-            <InfoRow icon="🖥" label="Server location" value={edgeColo ? `Cloudflare ${edgeColo}` : 'Chennai'} />
+            <InfoRow
+              icon="🖥"
+              label="Server location"
+              value={edgeCity ? `${edgeCity}${edgeColo ? ` (${edgeColo})` : ''}` : edgeColo ? `Cloudflare ${edgeColo}` : '—'}
+            />
+            <InfoRow
+              icon="📡"
+              label="Your network"
+              value={ispName ? `${ispName}${asn ? ` (AS${asn})` : ''}` : '—'}
+            />
+            <InfoRow icon="🔢" label="Your IP address" value={clientIp || '—'} />
             <InfoRow icon="📍" label="Your district" value={district || '—'} />
-            <InfoRow icon="📡" label="Connection" value={connType} />
+            <InfoRow icon="📶" label="Connection" value={connType} />
           </div>
         </section>
 
@@ -422,14 +434,14 @@ function MetricStat({
       {(sub1 || sub2) && (
         <div className="flex gap-3 mt-1">
           {sub1 && (
-            <span className="text-xs flex items-center gap-1">
-              <span style={{ color: sub1.color }}>▲</span>
+            <span className="text-xs flex items-center gap-1" title={`${sub1.label} loaded`}>
+              <span style={{ color: sub1.color }}>↓</span>
               <span className="text-gray-400">{sub1.value} ms</span>
             </span>
           )}
           {sub2 && (
-            <span className="text-xs flex items-center gap-1">
-              <span style={{ color: sub2.color }}>❄</span>
+            <span className="text-xs flex items-center gap-1" title={`${sub2.label} loaded`}>
+              <span style={{ color: sub2.color }}>↑</span>
               <span className="text-gray-400">{sub2.value} ms</span>
             </span>
           )}

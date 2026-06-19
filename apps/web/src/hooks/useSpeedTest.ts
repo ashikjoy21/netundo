@@ -18,6 +18,9 @@ export interface SpeedTestState {
   currentPhase: string | null;
   ispName: string | null;
   edgeColo: string | null;
+  edgeCity: string | null;
+  asn: number | null;
+  clientIp: string | null;
 }
 
 const initialState: SpeedTestState = {
@@ -33,6 +36,9 @@ const initialState: SpeedTestState = {
   currentPhase: null,
   ispName: null,
   edgeColo: null,
+  edgeCity: null,
+  asn: null,
+  clientIp: null,
 };
 
 export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
@@ -126,8 +132,21 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
     if (apiBase) {
       fetch(`${apiBase}/v1/health`)
         .then((r) => r.json())
-        .then((data: { colo?: string }) => {
-          setState((prev) => ({ ...prev, edgeColo: data.colo ?? null }));
+        .then((data: {
+          colo?: string | null;
+          city?: string | null;
+          asn?: number | null;
+          asOrganization?: string | null;
+          clientIp?: string | null;
+        }) => {
+          setState((prev) => ({
+            ...prev,
+            edgeColo: data.colo ?? null,
+            edgeCity: data.city ?? null,
+            asn: data.asn ?? null,
+            ispName: data.asOrganization ?? null,
+            clientIp: data.clientIp ?? null,
+          }));
         })
         .catch(() => {});
     }

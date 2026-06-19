@@ -16,7 +16,6 @@
 interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
-  DB: D1Database; // D1 binding (unused in MVP — Supabase is primary store)
 }
 
 // ---------------------------------------------------------------------------
@@ -171,9 +170,27 @@ function handleOptions(): Response {
   return new Response(null, { status: 204, headers: corsHeaders() });
 }
 
-/** GET /v1/health */
-function handleHealth(): Response {
-  return jsonResponse({ status: 'ok' });
+/** GET /v1/health
+ *
+ * Returns edge + client network metadata derived from Cloudflare's request
+ * properties, mirroring what speed.cloudflare.com shows in its "Server Location"
+ * panel (ISP/ASN, client IP, edge colo + city). Read from `request.cf`, which is
+ * populated for requests that hit a Worker on the Cloudflare edge.
+ */
+function handleHealth(request: Request): Response {
+  const cf = request.cf as Record<string, unknown> | undefined;
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+  const num = (v: unknown) => (typeof v === 'number' ? v : null);
+
+  return jsonResponse({
+    status: 'ok',
+    colo: str(cf?.colo),
+    city: str(cf?.city),
+    country: str(cf?.country),
+    asn: num(cf?.asn),
+    asOrganization: str(cf?.asOrganization) ?? str(cf?.organization),
+    clientIp: request.headers.get('CF-Connecting-IP'),
+  });
 }
 
 /** POST /v1/results */
@@ -426,7 +443,7 @@ export default {
 
     // Health
     if (method === 'GET' && (path === '/v1/health' || path === '/health')) {
-      return handleHealth();
+      return handleHealth(request);
     }
 
     // POST /v1/results

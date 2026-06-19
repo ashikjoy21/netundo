@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "deploy": "NEXT_PUBLIC_API_WORKER_URL=https://netundo-api.ashikjoy21.workers.dev pnpm build && wrangler pages deploy out --project-name netundo --commit-dirty=true"
   },
   "dependencies": {
     "@cloudflare/speedtest": "^1.10.1",
@@ -24,6 +25,7 @@
     "postcss": "^8",
     "tailwindcss": "^3.4.17",
     "autoprefixer": "^10.4.21",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "wrangler": "^4.19.0"
   }
 }

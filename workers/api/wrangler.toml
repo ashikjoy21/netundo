@@ -3,14 +3,10 @@ main = "src/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
-[[routes]]
-pattern = "api.netundo.in/*"
-zone_name = "netundo.in"
+# Custom route — enable once netundo.in is on Cloudflare:
+# [[routes]]
+# pattern = "api.netundo.in/*"
+# zone_name = "netundo.in"
 
 [vars]
-SUPABASE_URL = ""
-
-[[d1_databases]]
-binding = "DB"
-database_name = "netundo"
-database_id = "placeholder"
+SUPABASE_URL = "https://poxwxxutfancmqguclse.supabase.co"
