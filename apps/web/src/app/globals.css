@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --cf-orange: #f6821f;
+  --cf-purple: #7c3aed;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: inherit;
+  background: #f9fafb;
+  color: #111827;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+
+/* Chart tooltip */
+.recharts-tooltip-wrapper { z-index: 10; }
