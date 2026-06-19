@@ -33,24 +33,27 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 function Header() {
   return (
-    <header className="border-b border-gray-200 bg-white sticky top-0 z-30">
-      <div className="max-w-5xl mx-auto px-4 h-12 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+    <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/95 backdrop-blur">
+      <div className="mx-auto flex max-w-5xl flex-col gap-2 px-3 py-2 sm:h-12 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-0">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <a href="/" className="flex min-w-0 items-center gap-2">
           {/* Speedtest icon */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-cf-orange">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0 text-cf-orange">
             <path d="M12 2a10 10 0 110 20A10 10 0 0112 2z" stroke="currentColor" strokeWidth="1.5" />
             <path d="M12 12L7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             <path d="M12 12l4-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             <circle cx="12" cy="12" r="1.5" fill="currentColor" />
           </svg>
-          <a href="/" className="font-bold text-gray-900 text-base">netundo</a>
-          <span className="text-gray-300 mx-1">|</span>
-          <span className="text-sm text-gray-400">Speed Test</span>
+            <span className="truncate text-base font-bold text-gray-900">netundo</span>
+          </a>
+          <a href="/test" className="shrink-0 rounded-full bg-cf-orange px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cf-orange-dark sm:hidden">
+            Test Speed
+          </a>
         </div>
-        <nav className="flex items-center gap-4">
-          <a href="/kerala" className="text-sm text-gray-500 hover:text-gray-800 transition-colors">Kerala Map</a>
-          <a href="/charts" className="text-sm text-gray-500 hover:text-gray-800 transition-colors">Top Charts</a>
-          <a href="/test" className="rounded-full bg-cf-orange px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-cf-orange-dark">
+        <nav className="flex items-center gap-2 overflow-x-auto pb-0.5 text-sm sm:gap-4 sm:overflow-visible sm:pb-0">
+          <a href="/kerala" className="whitespace-nowrap rounded-full bg-gray-50 px-3 py-1.5 font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 sm:bg-transparent sm:px-0 sm:py-0">Kerala Map</a>
+          <a href="/charts" className="whitespace-nowrap rounded-full bg-gray-50 px-3 py-1.5 font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 sm:bg-transparent sm:px-0 sm:py-0">Top Charts</a>
+          <a href="/test" className="hidden rounded-full bg-cf-orange px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-cf-orange-dark sm:inline-flex">
             Test Speed
           </a>
         </nav>
