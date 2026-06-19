@@ -3,8 +3,13 @@ node_modules/
 out/
 dist/
 .wrangler/
-*.env.local
 .env
+.env.*
+!.env.example
+*.env.local
+# Wrangler local secrets
+.dev.vars
+*.dev.vars
 .turbo/
 *.tsbuildinfo
 .DS_Store
