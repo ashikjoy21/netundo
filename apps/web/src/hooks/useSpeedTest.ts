@@ -136,12 +136,13 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
         .then((data: {
           asn?: number | null;
           asOrganization?: string | null;
+          organization?: string | null;
           clientIp?: string | null;
         }) => {
           setState((prev) => ({
             ...prev,
             asn: data.asn ?? null,
-            ispName: data.asOrganization ?? null,
+            ispName: data.asOrganization ?? data.organization ?? null,
             clientIp: prev.clientIp ?? data.clientIp ?? null,
           }));
         })
@@ -189,13 +190,9 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
   }, []);
 
   const restart = useCallback(async () => {
-    engineRef.current?.restart();
-    if (!engineRef.current) {
-      await start();
-      return;
-    }
-    setState({ ...initialState, status: 'running' });
-    engineRef.current.play();
+    engineRef.current?.pause();
+    engineRef.current = null;
+    await start();
   }, [start]);
 
   useEffect(() => {

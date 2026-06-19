@@ -3,18 +3,18 @@ import { Lock, MapPinned, Network, RadioTower } from 'lucide-react';
 const ITEMS = [
   {
     Icon: RadioTower,
-    title: 'Run everywhere',
-    body: 'Measure Wi-Fi, mobile data, or wired connections from the places people actually use them: homes, hostels, shops, buses, campuses, and offices.',
+    title: 'Test real places',
+    body: 'Measure Wi-Fi, mobile data, or wired connections from homes, hostels, shops, campuses, offices, and everywhere people actually use the internet.',
   },
   {
     Icon: MapPinned,
-    title: 'Compare locally',
-    body: 'National averages hide local truth. netundo groups results by district, provider, connection type, and ASN so Kerala can compare networks place by place.',
+    title: 'Compare by area',
+    body: 'District, taluk, village, provider, connection type, and ASN context help Kerala see where networks perform well and where they fall behind.',
   },
   {
     Icon: Lock,
     title: 'Contribute privately',
-    body: 'District-only by default. Exact map points are opt-in and rounded before storage, so the public dataset helps everyone without exposing your home.',
+    body: 'GPS map pins are rounded before storage. If location is blocked, you can still submit district, taluk, and village data without a precise pin.',
   },
 ];
 
@@ -41,9 +41,7 @@ export function TrustStrip() {
             Region: Kerala
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-balance text-sm leading-6 text-neutral-400 sm:text-base">
-            Cloudflare shows the Internet as a living network. netundo applies
-            that idea locally: every speed test becomes a public signal for
-            understanding which providers actually perform in Kerala.
+            netundo turns individual speed tests into local public signals, so Kerala can compare providers by the places people actually live, work, and travel.
           </p>
         </div>
 

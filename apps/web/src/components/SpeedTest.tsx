@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { Cloud, Hash, LocateFixed, MapPin, RadioTower, Router, Server, Share2, Wifi } from 'lucide-react';
 import { useSpeedTest } from '@/hooks/useSpeedTest';
 import { SpeedChart } from './SpeedChart';
 import { NetworkQuality } from './NetworkQuality';
@@ -47,6 +48,11 @@ export function SpeedTest() {
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
   const isDone = status === 'done';
+  const networkLabel = ispName
+    ? `${ispName}${asn ? ` (AS${asn})` : ''}`
+    : asn
+      ? `AS${asn}`
+      : 'Not available from this connection';
 
   const downloadGroups = useMemo(() => groupBandwidthBySize(downloadPoints), [downloadPoints]);
   const uploadGroups = useMemo(() => groupBandwidthBySize(uploadPoints), [uploadPoints]);
@@ -83,11 +89,14 @@ export function SpeedTest() {
     await start();
   };
 
-  // Auto-transition to done
-  if (appState === 'testing' && isDone) {
+  // Auto-transition to done after React has committed the latest hook state.
+  useEffect(() => {
+    if (appState !== 'testing' || !isDone) return;
     setAppState('done');
-    submitResult();
-  }
+    void submitResult();
+    // submitResult reads the final measurement snapshot from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appState, isDone]);
 
   async function submitResult() {
     if (resultSubmitted) return;
@@ -146,8 +155,8 @@ export function SpeedTest() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Your Internet Speed</h1>
-          <p className="text-gray-500 text-sm">Powered by Cloudflare's measurement engine · Kerala Network Quality Map</p>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Test your internet where you are</h1>
+          <p className="text-gray-500 text-sm">Measure your connection and help Kerala compare real local network quality.</p>
         </div>
         <DistrictPicker onConfirm={handleStart} />
       </div>
@@ -244,7 +253,13 @@ export function SpeedTest() {
           <ActionBtn onClick={handleRetest} icon="↺" label="Retest" />
 
           {isDone && (
-            <ShareButton summary={summary} district={district} />
+            <ShareButton
+              summary={summary}
+              district={district}
+              area={localArea}
+              connectionType={connType}
+              networkLabel={networkLabel}
+            />
           )}
 
           {isDone && (
@@ -263,8 +278,8 @@ export function SpeedTest() {
 
         {/* Server Location */}
         <section className="space-y-3">
-          <SectionHeader title="Server Location" />
-          <div className="border border-gray-200 rounded-xl bg-white p-4 space-y-2.5">
+          <SectionHeader title="Connection path" />
+          <div className="border border-gray-200 rounded-xl bg-white p-4 space-y-3">
             <div className="h-56 rounded-lg overflow-hidden mb-3 bg-gray-100">
               <ServerLocationMap
                 client={district ? DISTRICT_LATLNG[district] ?? null : null}
@@ -273,21 +288,21 @@ export function SpeedTest() {
                 serverLabel={edgeCity ? `Cloudflare ${edgeCity}${edgeColo ? ` (${edgeColo})` : ''}` : 'Cloudflare edge'}
               />
             </div>
-            <InfoRow icon="🌐" label="Connected via" value="IPv4" />
+            <InfoRow icon={<Cloud />} label="Protocol" value="IPv4" />
             <InfoRow
-              icon="🖥"
-              label="Server location"
+              icon={<Server />}
+              label="Cloudflare edge"
               value={edgeCity ? `${edgeCity}${edgeColo ? ` (${edgeColo})` : ''}` : edgeColo ? `Cloudflare ${edgeColo}` : '—'}
             />
             <InfoRow
-              icon="📡"
-              label="Your network"
-              value={ispName ? `${ispName}${asn ? ` (AS${asn})` : ''}` : '—'}
+              icon={<RadioTower />}
+              label="Detected network"
+              value={networkLabel}
             />
-            <InfoRow icon="🔢" label="Your IP address" value={clientIp || '—'} />
-            <InfoRow icon="📍" label="Your district" value={district || '—'} />
-            {localArea && <InfoRow icon="⌖" label="Your area" value={localArea} />}
-            <InfoRow icon="📶" label="Connection" value={connType} />
+            <InfoRow icon={<Hash />} label="Client IP" value={clientIp || '—'} />
+            <InfoRow icon={<MapPin />} label="District" value={district || '—'} />
+            {localArea && <InfoRow icon={<LocateFixed />} label="Area" value={localArea} />}
+            <InfoRow icon={connType === 'wired' ? <Router /> : <Wifi />} label="Connection type" value={connType} />
           </div>
         </section>
 
@@ -504,24 +519,258 @@ function ActionBtn({ onClick, icon, label }: { onClick: () => void; icon: string
   );
 }
 
-function ShareButton({ summary, district }: { summary: Record<string, unknown>; district: string }) {
-  const text = `My internet speed in ${district}: ${formatMbps(summary.download as number)} Mbps ↓ ${formatMbps(summary.upload as number)} Mbps ↑ ${formatMs(summary.latency as number)} ms latency via netundo.in`;
+function ShareButton({
+  summary,
+  district,
+  area,
+  connectionType,
+  networkLabel,
+}: {
+  summary: Record<string, unknown>;
+  district: string;
+  area: string;
+  connectionType: ConnectionType;
+  networkLabel: string;
+}) {
+  const text = `My internet speed in ${area ? `${area}, ` : ''}${district} on ${networkLabel}: ${formatMbps(summary.download as number)} Mbps ↓ ${formatMbps(summary.upload as number)} Mbps ↑ ${formatMs(summary.latency as number)} ms latency via netundo.in`;
 
   return (
     <button
-      onClick={() => {
-        if (navigator.share) {
-          navigator.share({ title: 'My Speed Test Result', text }).catch(() => {});
-        } else {
-          navigator.clipboard.writeText(text).catch(() => {});
+      onClick={async () => {
+        const file = await createShareCard({
+          downloadMbps: formatMbps(summary.download as number),
+          uploadMbps: formatMbps(summary.upload as number),
+          latencyMs: formatMs(summary.latency as number),
+          jitterMs: formatMs(summary.jitter as number),
+          district,
+          area,
+          connectionType,
+          networkLabel,
+        });
+
+        if (file && navigator.share && canShareFile(file)) {
+          navigator.share({ title: 'My netundo speed test', text, files: [file] }).catch(() => {});
+          return;
         }
+
+        if (file) {
+          downloadFile(file);
+          navigator.clipboard?.writeText(text).catch(() => {});
+          return;
+        }
+
+        if (navigator.share) navigator.share({ title: 'My netundo speed test', text }).catch(() => {});
+        else navigator.clipboard.writeText(text).catch(() => {});
       }}
       className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-gray-200 text-sm text-gray-700 hover:border-gray-300 hover:bg-gray-50 transition-all"
     >
-      <span>↑</span>
+      <Share2 className="h-4 w-4 text-cf-orange" />
       <span>Share</span>
     </button>
   );
+}
+
+async function createShareCard({
+  downloadMbps,
+  uploadMbps,
+  latencyMs,
+  jitterMs,
+  district,
+  area,
+  connectionType,
+  networkLabel,
+}: {
+  downloadMbps: string;
+  uploadMbps: string;
+  latencyMs: string;
+  jitterMs: string;
+  district: string;
+  area: string;
+  connectionType: ConnectionType;
+  networkLabel: string;
+}): Promise<File | null> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1200;
+  canvas.height = 675;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const orangeDark = '#ff4f16';
+  const ink = '#171d2b';
+  const muted = '#64748b';
+  const faint = '#94a3b8';
+
+  ctx.textBaseline = 'alphabetic';
+  ctx.letterSpacing = '0px';
+
+  const gradient = ctx.createLinearGradient(0, 0, 1200, 675);
+  gradient.addColorStop(0, '#ff4618');
+  gradient.addColorStop(0.55, '#ff741f');
+  gradient.addColorStop(1, '#f6821f');
+  ctx.fillStyle = gradient;
+  roundRect(ctx, 0, 0, 1200, 675, 44);
+  ctx.fill();
+
+  const glow = ctx.createRadialGradient(600, 720, 20, 600, 720, 560);
+  glow.addColorStop(0, 'rgba(255, 247, 196, 0.9)');
+  glow.addColorStop(0.32, 'rgba(255, 221, 130, 0.32)');
+  glow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 1200, 675);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  for (let x = 24; x < 1200; x += 18) {
+    for (let y = 24; y < 675; y += 18) {
+      ctx.beginPath();
+      ctx.arc(x, y, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  const panelX = 70;
+  const panelW = 1060;
+  const contentX = panelX + 50;
+  const contentRight = panelX + panelW - 50;
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(120, 40, 0, 0.18)';
+  ctx.shadowBlur = 40;
+  ctx.shadowOffsetY = 18;
+  ctx.fillStyle = 'white';
+  roundRect(ctx, panelX, 80, panelW, 515, 34);
+  ctx.fill();
+  ctx.restore();
+
+  // Wordmark — measured so "undo" sits flush against "net"
+  ctx.textBaseline = 'alphabetic';
+  ctx.letterSpacing = '-2px';
+  ctx.font = '900 46px Inter, system-ui, sans-serif';
+  ctx.fillStyle = ink;
+  ctx.fillText('net', contentX, 152);
+  const netWidth = ctx.measureText('net').width;
+  ctx.fillStyle = orangeDark;
+  ctx.fillText('undo', contentX + netWidth + 4, 152);
+  ctx.letterSpacing = '0px';
+
+  // "SPEED TEST" eyebrow, right-aligned
+  ctx.textAlign = 'right';
+  ctx.fillStyle = orangeDark;
+  ctx.font = '800 18px Inter, system-ui, sans-serif';
+  ctx.letterSpacing = '3px';
+  ctx.fillText('SPEED TEST', contentRight, 145);
+  ctx.letterSpacing = '0px';
+  ctx.textAlign = 'left';
+
+  // Location + network
+  ctx.fillStyle = muted;
+  ctx.font = '600 23px Inter, system-ui, sans-serif';
+  ctx.fillText(
+    fitCanvasText(ctx, `${area ? `${area}, ` : ''}${district} · ${connectionTypeLabel(connectionType)}`, contentRight - contentX),
+    contentX,
+    202,
+  );
+  ctx.fillStyle = faint;
+  ctx.font = '600 20px Inter, system-ui, sans-serif';
+  ctx.fillText(fitCanvasText(ctx, networkLabel, contentRight - contentX), contentX, 236);
+
+  // Hero download number
+  ctx.fillStyle = ink;
+  ctx.font = '800 130px Inter, system-ui, sans-serif';
+  ctx.letterSpacing = '-2px';
+  ctx.fillText(downloadMbps, contentX - 4, 372);
+  const dlWidth = ctx.measureText(downloadMbps).width;
+  ctx.letterSpacing = '0px';
+  ctx.fillStyle = orangeDark;
+  ctx.font = '800 30px Inter, system-ui, sans-serif';
+  ctx.fillText('Mbps', contentX + dlWidth + 14, 372);
+  ctx.fillStyle = faint;
+  ctx.font = '600 22px Inter, system-ui, sans-serif';
+  ctx.fillText('download', contentX + dlWidth + 14, 340);
+
+  // Metric pills, evenly spaced across the panel
+  const gap = 24;
+  const pillW = (contentRight - contentX - gap * 2) / 3;
+  const pillY = 420;
+  drawMetric(ctx, contentX, pillY, pillW, 'Upload', `${uploadMbps} Mbps`);
+  drawMetric(ctx, contentX + pillW + gap, pillY, pillW, 'Latency', `${latencyMs} ms`);
+  drawMetric(ctx, contentX + (pillW + gap) * 2, pillY, pillW, 'Jitter', `${jitterMs} ms`);
+
+  // Footer
+  ctx.fillStyle = faint;
+  ctx.font = '600 20px Inter, system-ui, sans-serif';
+  ctx.fillText('Crowdsourced Kerala internet quality', contentX, 562);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = orangeDark;
+  ctx.font = '800 22px Inter, system-ui, sans-serif';
+  ctx.fillText('netundo.in', contentRight, 562);
+  ctx.textAlign = 'left';
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve(null);
+        return;
+      }
+      resolve(new File([blob], 'netundo-speed-test.png', { type: 'image/png' }));
+    }, 'image/png');
+  });
+}
+
+function drawMetric(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, label: string, value: string) {
+  ctx.fillStyle = '#fff7ed';
+  roundRect(ctx, x, y, w, 96, 22);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(246, 130, 31, 0.18)';
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, x, y, w, 96, 22);
+  ctx.stroke();
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '700 16px Inter, system-ui, sans-serif';
+  ctx.letterSpacing = '1px';
+  ctx.fillText(label.toUpperCase(), x + 24, y + 36);
+  ctx.letterSpacing = '0px';
+  ctx.fillStyle = '#171d2b';
+  ctx.font = '800 30px Inter, system-ui, sans-serif';
+  ctx.fillText(value, x + 24, y + 72);
+}
+
+function fitCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+
+  let trimmed = text;
+  while (trimmed.length > 0 && ctx.measureText(`${trimmed}...`).width > maxWidth) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return `${trimmed.trim()}...`;
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function canShareFile(file: File): boolean {
+  return typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
+}
+
+function downloadFile(file: File) {
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file.name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function connectionTypeLabel(type: ConnectionType): string {
+  if (type === 'wifi') return 'Wi-Fi';
+  if (type === 'mobile') return 'Mobile data';
+  return 'Wired';
 }
 
 function SectionHeader({ title }: { title: string }) {
@@ -533,12 +782,14 @@ function SectionHeader({ title }: { title: string }) {
   );
 }
 
-function InfoRow({ icon, label, value }: { icon: string; label: string; value: string }) {
+function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="text-base">{icon}</span>
+    <div className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2.5 text-sm">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-cf-orange shadow-sm [&>svg]:h-4 [&>svg]:w-4">
+        {icon}
+      </span>
       <span className="text-gray-500">{label}</span>
-      <span className="font-medium text-gray-800 ml-auto">{value}</span>
+      <span className="ml-auto max-w-[58%] truncate text-right font-medium text-gray-800">{value}</span>
     </div>
   );
 }

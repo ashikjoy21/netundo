@@ -67,13 +67,12 @@ export function Hero() {
           </p>
 
           <h1 className="max-w-4xl text-balance text-[3rem] font-semibold leading-[0.92] tracking-[-0.065em] text-white sm:text-[4.8rem] lg:text-[5.75rem]">
-            Know the networks that work best
-            <br className="hidden sm:block" /> where you live
+            Find the best internet
+            <br className="hidden sm:block" /> near you
           </h1>
 
           <p className="mx-auto mt-8 max-w-xl text-balance text-sm font-medium leading-6 text-white/72 sm:text-base">
-            Run a Cloudflare-powered speed test and help build an open,
-            crowdsourced map of mobile and broadband quality across Kerala.
+            Run a quick Cloudflare-powered speed test and help build Kerala&apos;s public map of Wi-Fi, mobile data, and broadband quality.
           </p>
 
           <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row">

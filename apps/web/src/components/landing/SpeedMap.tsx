@@ -65,7 +65,7 @@ export function SpeedMap() {
             <MapPinned className="h-6 w-6 text-cf-orange" /> Live ISP speeds across Kerala
           </h2>
           <p className="mt-1 text-sm text-gray-500">
-            Every pin is a real test someone shared. Color shows download speed.
+            Each pin is a rounded public test location. Color shows download speed.
           </p>
         </div>
         <button

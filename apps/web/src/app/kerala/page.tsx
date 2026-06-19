@@ -57,7 +57,7 @@ export default function KeralaPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Kerala Network Quality Map</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Crowdsourced speed test data from across all 14 districts · Updated weekly
+          Rounded map pins and district-level results from public netundo speed tests.
         </p>
       </div>
 
@@ -67,7 +67,7 @@ export default function KeralaPage() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">District-wise performance</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Compare download speed, latency, and ISP samples after exploring the live map.
+            Compare speed, latency, providers, and sample counts after exploring the live map.
           </p>
         </div>
 
