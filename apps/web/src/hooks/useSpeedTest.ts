@@ -16,6 +16,8 @@ export interface SpeedTestState {
   downLoadedLatencyPoints: number[];
   upLoadedLatencyPoints: number[];
   currentPhase: string | null;
+  progress: number;
+  durationMs: number | null;
   ispName: string | null;
   edgeColo: string | null;
   edgeCity: string | null;
@@ -34,6 +36,8 @@ const initialState: SpeedTestState = {
   downLoadedLatencyPoints: [],
   upLoadedLatencyPoints: [],
   currentPhase: null,
+  progress: 0,
+  durationMs: null,
   ispName: null,
   edgeColo: null,
   edgeCity: null,
@@ -41,9 +45,45 @@ const initialState: SpeedTestState = {
   clientIp: null,
 };
 
+// Saturating 0→1 curve: rises fast then eases toward 1 as `n` grows, never
+// reaching it. `halfLife` is the count at which it hits 0.5.
+function saturate(n: number, halfLife: number): number {
+  if (n <= 0) return 0;
+  return 1 - Math.pow(2, -n / halfLife);
+}
+
+// Phase-anchored progress estimate (0–1). Keyed on the measurement *phase* and
+// the number of data points received so far, NOT on a timer — so the bar moves
+// forward monotonically and never runs ahead of the real measurement. The true
+// "done" (1.0) is set separately from the engine's onFinish, independent of
+// this estimate. Bands: latency 0–15%, download 15–60%, upload 60–95%,
+// finalizing 95–99%.
+function estimateProgress(
+  phase: string | null,
+  downloadCount: number,
+  uploadCount: number,
+  latencyCount: number,
+): number {
+  // Upload is the last long phase — once it has points, we're in 60–95%.
+  if (uploadCount > 0 || phase === 'upload') {
+    return 0.6 + 0.35 * saturate(uploadCount, 10);
+  }
+  // Download phase: 15–60%.
+  if (downloadCount > 0 || phase === 'download') {
+    return 0.15 + 0.45 * saturate(downloadCount, 14);
+  }
+  // Latency / startup: 2–15%.
+  if (latencyCount > 0 || phase === 'latency' || phase === 'latencyUnderLoad') {
+    return 0.02 + 0.13 * saturate(latencyCount, 4);
+  }
+  return 0.02;
+}
+
 export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
   const [state, setState] = useState<SpeedTestState>(initialState);
   const engineRef = useRef<import('@cloudflare/speedtest').default | null>(null);
+  // Progress only ever moves forward within a run; reset on start/restart.
+  const progressRef = useRef(0);
 
   // Lazily create engine (browser-only)
   const createEngine = useCallback(async () => {
@@ -87,21 +127,50 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
       }));
     };
 
+    // Fired when the engine advances to a new measurement step. We rely on the
+    // phase `type` (from onResultsChange) for banding, but reading the phase
+    // here too keeps the bar moving even before a phase has produced points.
+    engine.onPhaseChange = ({ measurement }) => {
+      const phase = measurement?.type ?? null;
+      setState((prev) => {
+        const next = estimateProgress(
+          phase,
+          prev.downloadPoints.length,
+          prev.uploadPoints.length,
+          prev.unloadedLatencyPoints.length,
+        );
+        progressRef.current = Math.max(progressRef.current, next);
+        return { ...prev, currentPhase: phase, progress: progressRef.current };
+      });
+    };
+
     engine.onResultsChange = ({ type }) => {
       const r = engine.results;
+      const downloadPoints = r.getDownloadBandwidthPoints();
+      const uploadPoints = r.getUploadBandwidthPoints();
+      const unloadedLatencyPoints = r.getUnloadedLatencyPoints();
+      const next = estimateProgress(
+        type,
+        downloadPoints.length,
+        uploadPoints.length,
+        unloadedLatencyPoints.length,
+      );
+      progressRef.current = Math.min(0.99, Math.max(progressRef.current, next));
       setState((prev) => ({
         ...prev,
         summary: r.getSummary(),
-        downloadPoints: r.getDownloadBandwidthPoints(),
-        uploadPoints: r.getUploadBandwidthPoints(),
-        unloadedLatencyPoints: r.getUnloadedLatencyPoints(),
+        downloadPoints,
+        uploadPoints,
+        unloadedLatencyPoints,
         downLoadedLatencyPoints: r.getDownLoadedLatencyPoints(),
         upLoadedLatencyPoints: r.getUpLoadedLatencyPoints(),
         currentPhase: type,
+        progress: progressRef.current,
       }));
     };
 
     engine.onFinish = (results) => {
+      progressRef.current = 1;
       setState((prev) => ({
         ...prev,
         status: 'done',
@@ -113,6 +182,8 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
         downLoadedLatencyPoints: results.getDownLoadedLatencyPoints(),
         upLoadedLatencyPoints: results.getUpLoadedLatencyPoints(),
         currentPhase: null,
+        progress: 1,
+        durationMs: results.getTotalDurationMs() ?? null,
       }));
     };
 
@@ -125,6 +196,7 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
   }, [downloadUrl, uploadUrl]);
 
   const start = useCallback(async () => {
+    progressRef.current = 0;
     setState({ ...initialState, status: 'running' });
 
     // ISP / ASN / client IP come from our api worker (accurate regardless of which

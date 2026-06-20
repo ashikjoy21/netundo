@@ -39,7 +39,7 @@ export function SpeedTest() {
   const {
     state: { status, summary, scores, downloadPoints, uploadPoints,
       unloadedLatencyPoints, downLoadedLatencyPoints, upLoadedLatencyPoints,
-      currentPhase, edgeColo, edgeCity, asn, ispName, clientIp, error },
+      currentPhase, progress, durationMs, edgeColo, edgeCity, asn, ispName, clientIp, error },
     start,
     pause,
     resume,
@@ -173,9 +173,14 @@ export function SpeedTest() {
       <section>
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Your Internet Speed</h2>
 
-        {/* Phase label */}
-        {(isRunning || isPaused) && phaseLabel && (
-          <p className="text-xs text-gray-400 mb-2 animate-pulse">{phaseLabel}</p>
+        {/* Progress bar — running / paused / done */}
+        {(isRunning || isPaused || isDone) && (
+          <ProgressBar
+            progress={isDone ? 1 : progress}
+            phaseLabel={phaseLabel}
+            status={status}
+            durationMs={durationMs}
+          />
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-6 items-start">
@@ -436,6 +441,57 @@ export function SpeedTest() {
 }
 
 /* ── Sub-components ── */
+
+function ProgressBar({
+  progress,
+  phaseLabel,
+  status,
+  durationMs,
+}: {
+  progress: number;
+  phaseLabel: string | null;
+  status: string;
+  durationMs: number | null;
+}) {
+  const isDone = status === 'done';
+  const isPaused = status === 'paused';
+  const pct = Math.round(Math.min(1, Math.max(0, progress)) * 100);
+
+  const label = isDone
+    ? `Test complete${durationMs ? ` · ${(durationMs / 1000).toFixed(1)}s` : ''}`
+    : isPaused
+      ? 'Paused'
+      : phaseLabel ?? 'Starting…';
+
+  const barColor = isDone ? 'bg-green-500' : isPaused ? 'bg-gray-300' : 'bg-cf-orange';
+  const labelColor = isDone ? 'text-green-700' : isPaused ? 'text-gray-400' : 'text-gray-500';
+
+  return (
+    <div className="mb-4" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className={`text-xs font-medium flex items-center gap-1.5 ${labelColor}`}>
+          {isDone && (
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="text-green-600">
+              <circle cx="8" cy="8" r="7" fill="currentColor" />
+              <path d="M5 8.2l2 2 4-4.4" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+          {!isDone && !isPaused && <span className="w-1.5 h-1.5 rounded-full bg-cf-orange animate-pulse" />}
+          {label}
+        </span>
+        <span className={`text-xs font-semibold tabular-nums ${isDone ? 'text-green-700' : 'text-gray-400'}`}>
+          {pct}%
+        </span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+        <div
+          className={`h-full rounded-full transition-[width] duration-500 ease-out ${barColor}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 function MetricStat({
   label, value, unit, sub1, sub2, tooltip,
