@@ -104,8 +104,9 @@ export function scoreNetwork(row: AggregateRow, useCase: UseCase = 'overall'): S
     normalizeLower(latencyMs, 10, 140) * weights.latency +
     normalizeLower(jitterMs, 2, 45) * weights.jitter;
 
-  // Keep low-sample networks visible, but do not let one lucky test dominate.
-  const score = clamp(base * 100 * (0.82 + confidence * 0.18), 0, 100);
+  // Confidence is a first-class part of the public rank score — a single lucky
+  // test must not outrank a stable network with many samples (see compareRankedNetworks).
+  const score = clamp(base * 100 * confidenceMultiplier(confidence), 0, 100);
 
   return {
     key: `${row.asn ?? row.isp_name ?? 'unknown'}-${row.district}-${row.connection_type}`,
@@ -136,7 +137,18 @@ export function groupIspScores(rows: AggregateRow[], useCase: UseCase): ScoredNe
 
   return [...buckets.values()]
     .map((bucket) => scoreNetwork(mergeRows(bucket), useCase))
-    .sort((a, b) => b.score - a.score || b.samples - a.samples);
+    .sort(compareRankedNetworks);
+}
+
+/** Sort key for public leaderboards: score, then confidence, then sample count. */
+export function compareRankedNetworks(a: ScoredNetwork, b: ScoredNetwork): number {
+  return b.score - a.score || b.confidence - a.confidence || b.samples - a.samples;
+}
+
+/** Prefer a well-sampled leader; fall back to the top row when everything is sparse. */
+export function pickChartLeader(networks: ScoredNetwork[]): ScoredNetwork | null {
+  if (!networks.length) return null;
+  return networks.find((row) => row.samples >= 3 && row.confidence >= 0.35) ?? networks[0];
 }
 
 export function formatConnectionType(type: string): string {
@@ -210,6 +222,11 @@ function normalizeLower(value: number | null, excellent: number, poor: number): 
 
 function sampleConfidence(samples: number): number {
   return clamp(Math.sqrt(samples / 25), 0, 1);
+}
+
+/** Maps 0–1 sample confidence to a score multiplier (floor 0.35, ceiling 1.0). */
+function confidenceMultiplier(confidence: number): number {
+  return 0.35 + confidence * 0.65;
 }
 
 function gradeForScore(score: number, samples: number): ScoredNetwork['grade'] {

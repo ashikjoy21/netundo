@@ -6,6 +6,7 @@
  *   POST /v1/results
  *   GET  /v1/results/:id
  *   GET  /v1/aggregate
+ *   POST /v1/feedback
  *   GET  /v1/health
  */
 
@@ -697,6 +698,89 @@ async function handleOokla(env: Env): Promise<Response> {
 
   const rows = await res.json();
   return jsonResponse(Array.isArray(rows) ? rows : []);
+}
+
+interface FeedbackPayload {
+  category?: string;
+  message?: string;
+  email?: string;
+  district?: string;
+  pageUrl?: string;
+}
+
+const FEEDBACK_CATEGORIES: Set<string> = new Set(['bug', 'feature', 'data', 'general']);
+
+/** POST /v1/feedback — public feedback / bug reports from the website. */
+async function handlePostFeedback(request: Request, env: Env): Promise<Response> {
+  let payload: FeedbackPayload;
+  try {
+    payload = (await request.json()) as FeedbackPayload;
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const category = typeof payload.category === 'string' ? payload.category : '';
+  if (!FEEDBACK_CATEGORIES.has(category)) {
+    return jsonResponse({ error: 'category must be bug, feature, data, or general' }, 422);
+  }
+
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  if (message.length < 3) {
+    return jsonResponse({ error: 'message is required' }, 422);
+  }
+  if (message.length > 4000) {
+    return jsonResponse({ error: 'message is too long (max 4000 chars)' }, 422);
+  }
+
+  const email =
+    typeof payload.email === 'string' && payload.email.trim()
+      ? payload.email.trim().slice(0, 320)
+      : null;
+  const district =
+    typeof payload.district === 'string' && payload.district.trim()
+      ? payload.district.trim().slice(0, 120)
+      : null;
+  const pageUrl =
+    typeof payload.pageUrl === 'string' && payload.pageUrl.trim()
+      ? payload.pageUrl.trim().slice(0, 500)
+      : null;
+
+  // --- Rate limiting (shares the same 10/hour budget keyed by IP hash) ---
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  const ipHash = await hashIp(ip);
+  if (await isRateLimited(ipHash)) {
+    return jsonResponse({ error: 'Rate limit exceeded: please try again later' }, 429);
+  }
+
+  const supabase = makeSupabase(env);
+  if (!supabase) {
+    return jsonResponse(
+      { error: 'Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.' },
+      503,
+    );
+  }
+
+  const insertRes = await supabase('feedback', {
+    method: 'POST',
+    body: JSON.stringify({
+      category,
+      message,
+      email,
+      district,
+      page_url: pageUrl,
+      user_agent: request.headers.get('User-Agent'),
+      ip_hash: ipHash,
+    }),
+    headers: { Prefer: 'return=minimal' },
+  });
+
+  if (!insertRes.ok) {
+    const errText = await insertRes.text();
+    console.error('Supabase feedback insert error', insertRes.status, errText);
+    return jsonResponse({ error: 'Failed to store feedback' }, 502);
+  }
+
+  return jsonResponse({ success: true }, 201);
 }
 
 // ---------------------------------------------------------------------------

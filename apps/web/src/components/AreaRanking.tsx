@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Trophy, TrendingUp, ArrowRight } from 'lucide-react';
 import {
+  compareRankedNetworks,
   scoreNetwork,
   formatConnectionType,
   type AggregateRow,
@@ -52,7 +53,7 @@ export function AreaRanking({ district, connectionType, asn, ispName }: Props) {
 
   const ranked: ScoredNetwork[] = (rows ?? [])
     .map((row) => scoreNetwork(row, 'overall'))
-    .sort((a, b) => b.score - a.score || b.samples - a.samples);
+    .sort(compareRankedNetworks);
 
   const connLabel = formatConnectionType(connectionType);
 

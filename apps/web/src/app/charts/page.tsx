@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, ArrowDownUp, Gamepad2, Headphones, Play, Search, Trophy, Wifi } from 'lucide-react';
 import {
+  compareRankedNetworks,
   formatConnectionType,
   groupIspScores,
+  pickChartLeader,
   scoreNetwork,
   USE_CASES,
   type AggregateRow,
@@ -47,7 +49,7 @@ export default function ChartsPage() {
 
   const charts = useMemo(() => {
     const scored = district
-      ? rows.map((row) => scoreNetwork(row, useCase)).sort((a, b) => b.score - a.score || b.samples - a.samples)
+      ? rows.map((row) => scoreNetwork(row, useCase)).sort(compareRankedNetworks)
       : groupIspScores(rows, useCase);
 
     const needle = query.trim().toLowerCase();
@@ -57,7 +59,7 @@ export default function ChartsPage() {
   }, [district, query, rows, useCase]);
 
   const selectedUseCase = USE_CASES.find((item) => item.id === useCase) ?? USE_CASES[0];
-  const leader = charts[0] ?? null;
+  const leader = pickChartLeader(charts);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
@@ -79,7 +81,7 @@ export default function ChartsPage() {
             Find the best ISP for how you actually use the internet.
           </h1>
           <p className="mt-5 max-w-2xl text-sm leading-6 text-white/68 sm:text-base">
-            netundo score blends Cloudflare-style quality signals: download, upload, latency, jitter, and sample confidence. Choose a use case to re-rank the chart.
+            netundo score blends download, upload, latency, jitter, and sample confidence — low-confidence networks are penalised so one-off tests do not top the chart. Choose a use case to re-rank.
           </p>
         </div>
       </section>

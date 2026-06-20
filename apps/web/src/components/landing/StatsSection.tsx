@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Gamepad2, Gauge, Headphones, Play, Trophy } from 'lucide-react';
 import {
+  compareRankedNetworks,
   formatConnectionType,
   groupIspScores,
+  pickChartLeader,
   scoreNetwork,
   USE_CASES,
   type AggregateRow,
@@ -41,7 +43,7 @@ export function StatsSection() {
       const samples = bucket.reduce((sum, row) => sum + row.sample_count, 0);
       const bestRow = bucket
         .map((row) => scoreNetwork(row, 'overall'))
-        .sort((a, b) => b.score - a.score)[0];
+        .sort(compareRankedNetworks)[0];
       return { ...bestRow, district, samples };
     })
       .sort((a, b) => b.score - a.score)
@@ -55,7 +57,7 @@ export function StatsSection() {
   const useCaseLeaders = useMemo(
     () => USE_CASES.filter((useCase) => useCase.id !== 'overall').slice(0, 3).map((useCase) => ({
       ...useCase,
-      leader: groupIspScores(rows, useCase.id)[0] ?? null,
+      leader: pickChartLeader(groupIspScores(rows, useCase.id)),
     })),
     [rows],
   );
