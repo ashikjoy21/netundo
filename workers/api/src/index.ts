@@ -62,6 +62,15 @@ interface ResultPayload {
     packetLoss?: number;
   };
   scores?: Record<string, { points: number; classificationName: string }>;
+  measurement?: {
+    profile?: 'full' | 'lite';
+    durationMs?: number;
+    downloadSamples?: number;
+    uploadSamples?: number;
+    downloadCov?: number;
+    clientVersion?: string;
+    engineVersion?: string;
+  };
   client: {
     connectionType: 'mobile' | 'wifi' | 'wired';
     effectiveType?: string;
@@ -259,7 +268,7 @@ async function handlePostResult(
 
   // --- Build DB row ---
   const id = uuidv4();
-  const { summary, scores, client, location, plan, consent } = payload;
+  const { summary, scores, client, location, plan, consent, measurement } = payload;
 
   const planMbps =
     typeof plan?.advertisedMbps === 'number' &&
@@ -271,6 +280,20 @@ async function handlePostResult(
   // Convert bps -> Mbps; keep null when absent
   const bpsToMbps = (v?: number) =>
     typeof v === 'number' ? v / 1_000_000 : null;
+
+  // Confidence 0–1: how much to trust this reading, from its own provenance.
+  // Half from sample adequacy (more samples → tighter percentile), half from
+  // stability (low coefficient of variation → consistent link). A slow but
+  // stable connection still scores well — confidence reflects measurement
+  // quality, NOT speed, so it never penalises legitimate slow-link data.
+  const computeConfidence = (m?: ResultPayload['measurement']): number | null => {
+    if (!m) return null;
+    const samples = typeof m.downloadSamples === 'number' ? m.downloadSamples : 0;
+    const sampleScore = Math.min(1, samples / 8);
+    const cov = typeof m.downloadCov === 'number' ? m.downloadCov : null;
+    const stabilityScore = cov == null ? 0.5 : Math.max(0, Math.min(1, 1 - cov));
+    return Math.round((0.5 * sampleScore + 0.5 * stabilityScore) * 100) / 100;
+  };
 
   const row = {
     id,
@@ -304,6 +327,24 @@ async function handlePostResult(
     // Advertised plan speed (user-reported). Only included when present so that
     // inserts keep working even before the plan_mbps migration is applied.
     ...(planMbps != null ? { plan_mbps: planMbps } : {}),
+
+    // Measurement provenance + derived confidence. Conditionally spread so
+    // inserts keep working before migration 006 is applied. Lets the dataset be
+    // re-weighted / quarantined later without re-collecting it.
+    ...(measurement
+      ? {
+          measurement_profile: measurement.profile ?? null,
+          test_duration_ms:
+            typeof measurement.durationMs === 'number' ? Math.round(measurement.durationMs) : null,
+          download_sample_count: measurement.downloadSamples ?? null,
+          upload_sample_count: measurement.uploadSamples ?? null,
+          download_cov:
+            typeof measurement.downloadCov === 'number' ? measurement.downloadCov : null,
+          client_version: measurement.clientVersion ?? null,
+          engine_version: measurement.engineVersion ?? null,
+          confidence: computeConfidence(measurement),
+        }
+      : {}),
 
     // Kerala location
     district: location.district,
