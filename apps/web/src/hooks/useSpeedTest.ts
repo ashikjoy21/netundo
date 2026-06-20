@@ -190,7 +190,22 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
     };
 
     engine.onError = (message) => {
-      setState((prev) => ({ ...prev, status: 'error', error: message }));
+      // The engine fires onError for non-fatal, per-step failures and then
+      // continues to the next step and still finishes. The most common one is
+      // the packet-loss test, which runs over WebRTC/TURN and is blocked on many
+      // real networks — it's step 6 of 15, mid-test. Treating that as a fatal
+      // 'error' status used to drop the UI out of running/done, making the
+      // progress bar vanish for the rest of the run (the heavy transfers) while
+      // the charts kept filling. Keep the run alive if any bandwidth data has
+      // arrived (or we're already done); only surface a hard error when the test
+      // produced nothing measurable.
+      setState((prev) => {
+        const hasData = prev.downloadPoints.length > 0 || prev.uploadPoints.length > 0;
+        if (hasData || prev.status === 'done') {
+          return { ...prev, error: message };
+        }
+        return { ...prev, status: 'error', error: message };
+      });
     };
 
     engineRef.current = engine;
