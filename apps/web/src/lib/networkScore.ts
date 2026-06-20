@@ -8,10 +8,28 @@ export interface AggregateRow {
   sample_count: number;
   p50_download_mbps: number | null;
   p90_download_mbps: number | null;
+  avg_download_mbps?: number | null;
   p50_upload_mbps?: number | null;
   p90_upload_mbps?: number | null;
   p50_latency_ms: number | null;
+  avg_latency_ms?: number | null;
   p50_jitter_ms?: number | null;
+}
+
+/** Sample-weighted mean of a numeric field across aggregate rows (true district average when field is avg_*). */
+export function weightedMean(
+  rows: AggregateRow[],
+  field: keyof AggregateRow,
+): number | null {
+  const usable = rows.filter(
+    (row) => typeof row[field] === 'number' && row.sample_count > 0,
+  );
+  const weightTotal = usable.reduce((sum, row) => sum + row.sample_count, 0);
+  if (!weightTotal) return null;
+  return (
+    usable.reduce((sum, row) => sum + (row[field] as number) * row.sample_count, 0) /
+    weightTotal
+  );
 }
 
 export interface ScoredNetwork {

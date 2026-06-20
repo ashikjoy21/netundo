@@ -19,7 +19,18 @@ const FILTERS: { id: ConnFilter; label: string }[] = [
   { id: 'wired', label: 'Wired' },
 ];
 
-export function SpeedMap() {
+interface SpeedMapProps {
+  /** When set, connection filtering is controlled by the parent (e.g. Kerala page dropdowns). */
+  connectionType?: string;
+  district?: string;
+  hideConnectionFilters?: boolean;
+}
+
+export function SpeedMap({
+  connectionType = '',
+  district = '',
+  hideConnectionFilters = false,
+}: SpeedMapProps = {}) {
   const [points, setPoints] = useState<SpeedPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<ConnFilter>('all');
@@ -39,10 +50,17 @@ export function SpeedMap() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = useMemo(
-    () => (filter === 'all' ? points : points.filter((p) => p.connection_type === filter)),
-    [points, filter],
-  );
+  const filtered = useMemo(() => {
+    let result = points;
+    const conn = hideConnectionFilters ? connectionType : filter;
+    if (conn && conn !== 'all') {
+      result = result.filter((p) => p.connection_type === conn);
+    }
+    if (district) {
+      result = result.filter((p) => p.district === district);
+    }
+    return result;
+  }, [points, filter, connectionType, district, hideConnectionFilters]);
 
   const locateMe = () => {
     if (!navigator.geolocation) return;
@@ -79,28 +97,32 @@ export function SpeedMap() {
 
       {/* Filter chips + legend */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
-          {FILTERS.map((f) => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                filter === f.id
-                  ? 'bg-cf-orange text-white'
-                  : 'border border-gray-200 text-gray-600 hover:border-gray-300'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
+        {!hideConnectionFilters ? (
+          <div className="flex flex-wrap gap-2">
+            {FILTERS.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setFilter(f.id)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                  filter === f.id
+                    ? 'bg-cf-orange text-white'
+                    : 'border border-gray-200 text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div />
+        )}
         <Legend />
       </div>
 
       <div className="relative h-[460px] overflow-hidden rounded-2xl border border-gray-200 bg-gray-100">
         <SpeedMapCanvas points={filtered} flyTo={userLoc} />
 
-        {!loading && points.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-sm">
             <div className="pointer-events-auto rounded-xl border border-gray-200 bg-white px-6 py-5 text-center shadow-sm">
               <MapPinned className="mx-auto mb-2 h-6 w-6 text-cf-orange" />

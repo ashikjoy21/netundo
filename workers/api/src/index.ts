@@ -413,6 +413,11 @@ function percentile(sorted: number[], p: number): number | null {
   return sorted[lower] + (sorted[upper] - sorted[lower]) * (idx - lower);
 }
 
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
 interface TestResultRow {
   district: string;
   taluk: string | null;
@@ -452,9 +457,11 @@ interface AggregateOutRow {
   sample_count: number;
   p50_download_mbps: number | null;
   p90_download_mbps: number | null;
+  avg_download_mbps: number | null;
   p50_upload_mbps: number | null;
   p90_upload_mbps: number | null;
   p50_latency_ms: number | null;
+  avg_latency_ms: number | null;
   p50_jitter_ms: number | null;
 }
 
@@ -497,9 +504,11 @@ function aggregateTestResults(
       sample_count: bucket.length,
       p50_download_mbps: percentile(nums('download_mbps'), 0.5),
       p90_download_mbps: percentile(nums('download_mbps'), 0.9),
+      avg_download_mbps: mean(nums('download_mbps')),
       p50_upload_mbps: percentile(nums('upload_mbps'), 0.5),
       p90_upload_mbps: percentile(nums('upload_mbps'), 0.9),
       p50_latency_ms: percentile(nums('latency_ms'), 0.5),
+      avg_latency_ms: mean(nums('latency_ms')),
       p50_jitter_ms: percentile(nums('jitter_ms'), 0.5),
     };
   });

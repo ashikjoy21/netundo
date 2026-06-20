@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { SpeedMap } from '@/components/landing/SpeedMap';
+import { weightedMean, type AggregateRow } from '@/lib/networkScore';
 import { slugify } from '@/lib/slug';
 
 const DISTRICTS = [
@@ -10,18 +11,14 @@ const DISTRICTS = [
   'Kozhikode', 'Wayanad', 'Kannur', 'Kasaragod',
 ];
 
-interface AggRow {
-  district: string;
-  isp_name: string;
-  connection_type: string;
-  sample_count: number;
-  p50_download_mbps: number;
-  p90_download_mbps: number;
-  p50_latency_ms: number;
-}
+const CONN_LABELS: Record<string, string> = {
+  mobile: 'Mobile data',
+  wifi: 'Wi-Fi',
+  wired: 'Wired',
+};
 
 export default function KeralaPage() {
-  const [data, setData] = useState<AggRow[]>([]);
+  const [data, setData] = useState<AggregateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState('');
   const [selectedConn, setSelectedConn] = useState('');
@@ -30,28 +27,41 @@ export default function KeralaPage() {
     const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
     if (!apiBase) { setLoading(false); return; }
 
+    setLoading(true);
     const params = new URLSearchParams();
     if (selectedDistrict) params.set('district', selectedDistrict);
     if (selectedConn) params.set('connection_type', selectedConn);
 
     fetch(`${apiBase}/v1/aggregate?${params}`)
       .then((r) => r.json())
-      .then((rows: AggRow[]) => { setData(rows); setLoading(false); })
-      .catch(() => setLoading(false));
+      .then((rows: AggregateRow[]) => { setData(Array.isArray(rows) ? rows : []); })
+      .catch(() => setData([]))
+      .finally(() => setLoading(false));
   }, [selectedDistrict, selectedConn]);
 
-  // Group by district, pick best ISP row per district for the summary
+  // Per-district summary: sample-weighted mean download/latency across matching tests.
   const districtSummary = DISTRICTS.map((d) => {
     const rows = data.filter((r) => r.district === d);
     const total = rows.reduce((a, r) => a + r.sample_count, 0);
-    const bestDown = rows.length
-      ? Math.max(...rows.map((r) => r.p90_download_mbps ?? 0))
-      : null;
-    const avgLatency = rows.length
-      ? rows.reduce((a, r) => a + (r.p50_latency_ms ?? 0), 0) / rows.length
-      : null;
-    return { district: d, total, bestDown, avgLatency, rows };
+    const avgDown =
+      weightedMean(rows, 'avg_download_mbps') ??
+      weightedMean(rows, 'p50_download_mbps');
+    const avgLatency =
+      weightedMean(rows, 'avg_latency_ms') ??
+      weightedMean(rows, 'p50_latency_ms');
+    return { district: d, total, avgDown, avgLatency, rows };
   });
+
+  const visibleDistricts = districtSummary.filter(({ district, total }) => {
+    if (selectedDistrict) return district === selectedDistrict;
+    if (selectedConn) return total > 0;
+    return true;
+  });
+
+  const filterLabel = [
+    selectedDistrict || 'All districts',
+    selectedConn ? CONN_LABELS[selectedConn] : 'All connections',
+  ].join(' · ');
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
@@ -62,13 +72,20 @@ export default function KeralaPage() {
         </p>
       </div>
 
-      <SpeedMap />
+      <SpeedMap
+        connectionType={selectedConn}
+        district={selectedDistrict}
+        hideConnectionFilters
+      />
 
       <section className="space-y-4">
         <div>
           <h2 className="text-xl font-bold text-gray-900">District-wise performance</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Compare speed, latency, providers, and sample counts after exploring the live map.
+            Average download speed, latency, and test counts from the last 7 days.
+            {!loading && (selectedDistrict || selectedConn) ? (
+              <span className="text-gray-700"> Showing: {filterLabel}.</span>
+            ) : null}
           </p>
         </div>
 
@@ -80,7 +97,7 @@ export default function KeralaPage() {
           className="rounded-lg border border-gray-200 px-3 py-2 text-sm bg-white"
         >
           <option value="">All districts</option>
-          {DISTRICTS.map((d) => <option key={d}>{d}</option>)}
+          {DISTRICTS.map((d) => <option key={d} value={d}>{d}</option>)}
         </select>
         <select
           value={selectedConn}
@@ -92,23 +109,37 @@ export default function KeralaPage() {
           <option value="wifi">Wi-Fi</option>
           <option value="wired">Wired</option>
         </select>
+        {(selectedDistrict || selectedConn) && (
+          <button
+            type="button"
+            onClick={() => { setSelectedDistrict(''); setSelectedConn(''); }}
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {/* District grid */}
       {loading ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {Array.from({ length: 14 }).map((_, i) => (
+          {Array.from({ length: selectedDistrict ? 1 : 8 }).map((_, i) => (
             <div key={i} className="h-28 rounded-xl bg-gray-100 animate-pulse" />
           ))}
         </div>
+      ) : visibleDistricts.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-10 text-center text-sm text-gray-500">
+          No tests match these filters yet. Try another district or connection type, or{' '}
+          <a href="/test" className="font-medium text-cf-orange hover:underline">run a test</a>.
+        </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {districtSummary.map(({ district, total, bestDown, avgLatency }) => (
+          {visibleDistricts.map(({ district, total, avgDown, avgLatency }) => (
             <DistrictCard
               key={district}
               district={district}
               samples={total}
-              downloadMbps={bestDown}
+              downloadMbps={avgDown}
               latencyMs={avgLatency}
             />
           ))}
@@ -198,7 +229,9 @@ function DistrictCard({
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide truncate">{district}</p>
       <p className={`text-2xl font-bold mt-1 ${speedColor}`}>
         {downloadMbps != null ? `${downloadMbps.toFixed(0)}` : '—'}
-        {downloadMbps != null && <span className="text-sm font-normal text-gray-400 ml-0.5">Mbps</span>}
+        {downloadMbps != null && (
+          <span className="text-sm font-normal text-gray-400 ml-0.5">Mbps avg</span>
+        )}
       </p>
       <p className="text-xs text-gray-400 mt-1">
         {latencyMs != null ? `${latencyMs.toFixed(0)}ms latency · ` : ''}
