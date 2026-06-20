@@ -27,23 +27,6 @@ const ServerLocationMap = dynamic(() => import('./ServerLocationMap'), {
 
 type AppState = 'setup' | 'testing' | 'done';
 
-// Measurement provenance tags. Bump CLIENT_VERSION on any change to how the
-// test is run or results are derived, so older readings can be filtered later.
-// ENGINE_VERSION mirrors the pinned @cloudflare/speedtest dependency — keep in
-// sync when that package is upgraded.
-const CLIENT_VERSION = 'web-1';
-const ENGINE_VERSION = '@cloudflare/speedtest@1.10.1';
-
-/** Coefficient of variation (stddev / mean) of a sample set. null if not computable. */
-function coefficientOfVariation(values: number[]): number | undefined {
-  const xs = values.filter((v) => typeof v === 'number' && v > 0);
-  if (xs.length < 2) return undefined;
-  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
-  if (mean === 0) return undefined;
-  const variance = xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length;
-  return Math.sqrt(variance) / mean;
-}
-
 export function SpeedTest() {
   const [appState, setAppState] = useState<AppState>('setup');
   const [district, setDistrict] = useState('');
@@ -56,12 +39,11 @@ export function SpeedTest() {
   const {
     state: { status, summary, scores, downloadPoints, uploadPoints,
       unloadedLatencyPoints, downLoadedLatencyPoints, upLoadedLatencyPoints,
-      currentPhase, progress, durationMs, edgeColo, edgeCity, asn, ispName, clientIp, error, profile },
+      currentPhase, progress, durationMs, edgeColo, edgeCity, asn, ispName, clientIp, error },
     start,
     pause,
     resume,
     restart,
-    finishNow,
   } = useSpeedTest();
 
   const isRunning = status === 'running';
@@ -136,15 +118,6 @@ export function SpeedTest() {
         body: JSON.stringify({
           summary,
           scores,
-          measurement: {
-            profile,
-            durationMs: durationMs ?? undefined,
-            downloadSamples: downloadPoints.length,
-            uploadSamples: uploadPoints.length,
-            downloadCov: coefficientOfVariation(downloadPoints.map((p) => p.bps)),
-            clientVersion: CLIENT_VERSION,
-            engineVersion: ENGINE_VERSION,
-          },
           client: {
             connectionType: connType,
             effectiveType: nav.connection?.effectiveType,
@@ -279,12 +252,6 @@ export function SpeedTest() {
           ) : isPaused ? (
             <ActionBtn onClick={resume} icon={<Play className="h-4 w-4" />} label="Resume" />
           ) : null}
-
-          {/* Escape hatch for a slow connection: stop and keep the result so far.
-              Only once there's something measured to keep. */}
-          {(isRunning || isPaused) && (downloadPoints.length > 0 || uploadPoints.length > 0) && (
-            <ActionBtn onClick={finishNow} icon={<Server className="h-4 w-4" />} label="Finish now" />
-          )}
 
           <ActionBtn onClick={handleRetest} icon={<RotateCcw className="h-4 w-4" />} label="Retest" />
 

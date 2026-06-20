@@ -67,27 +67,6 @@ export interface TestResultPayload {
   };
   /** AIM quality scores keyed by category (streaming, gaming, rtc, …) */
   scores?: Record<string, { points: number; classificationName: string }>;
-  /**
-   * How the measurement was taken — provenance, not result. Lets the dataset be
-   * re-weighted, audited, or quarantined later (e.g. "downweight short tests",
-   * "ignore client v1"). A reading without this is a black box you can't fix.
-   */
-  measurement?: {
-    /** Which engine profile ran: 'full' (default) or 'lite' (slow/metered link). */
-    profile: 'full' | 'lite';
-    /** Total wall-clock duration of the test in milliseconds. */
-    durationMs?: number;
-    /** Number of download bandwidth samples collected. */
-    downloadSamples?: number;
-    /** Number of upload bandwidth samples collected. */
-    uploadSamples?: number;
-    /** Coefficient of variation (stddev/mean) of download samples — 0 = perfectly stable. */
-    downloadCov?: number;
-    /** App build identifier, so bad releases can be excluded retroactively. */
-    clientVersion?: string;
-    /** Measurement engine version (e.g. '@cloudflare/speedtest@1.10.1'). */
-    engineVersion?: string;
-  };
   client: {
     connectionType: ConnectionType;
     /** navigator.connection.effectiveType */

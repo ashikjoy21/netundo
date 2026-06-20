@@ -5,13 +5,6 @@ import type { BandwidthPoint, MeasurementSummary, Scores } from '@cloudflare/spe
 
 export type TestStatus = 'idle' | 'running' | 'paused' | 'done' | 'error';
 
-/**
- * Which measurement profile the engine ran. Every connection currently runs the
- * full Cloudflare default profile (100kB → 250MB); the field is kept as
- * provenance so a lighter profile could be reintroduced later without a schema change.
- */
-export type MeasurementProfile = 'full' | 'lite';
-
 export interface SpeedTestState {
   status: TestStatus;
   error: string | null;
@@ -30,7 +23,6 @@ export interface SpeedTestState {
   edgeCity: string | null;
   asn: number | null;
   clientIp: string | null;
-  profile: MeasurementProfile;
 }
 
 const initialState: SpeedTestState = {
@@ -51,26 +43,19 @@ const initialState: SpeedTestState = {
   edgeCity: null,
   asn: null,
   clientIp: null,
-  profile: 'full',
 };
 
 // Total number of measurement steps in the engine's default progressive
-// profile (@cloudflare/speedtest 1.10.1). Progress MUST be anchored to the step
-// index — not the phase type — because the engine interleaves download and upload
-// steps and keeps the heaviest transfers (100MB/250MB download, 50MB upload) for
-// last; otherwise the first small upload chunk is mistaken for "deep into the
-// test" and the bar races to ~90% while most of the work remains. The engine
-// stores its config in a private field, so this count can't be read at runtime;
-// if a future version changes the profile the bar is still correct at both ends
-// (0 at start, snapped to 1 by onFinish) — only mid-test pacing would drift.
+// profile (@cloudflare/speedtest 1.10.1). The engine interleaves download and
+// upload steps and keeps the heaviest transfers (100MB/250MB download, 50MB
+// upload) for last, so progress MUST be anchored to the step index — not to the
+// phase type — otherwise the first small upload chunk (step 5 of 15) is mistaken
+// for "deep into the test" and the bar races to ~90% while most of the work
+// remains. The engine stores its config in a private field, so this count can't
+// be read at runtime; if a future version changes the profile the bar is still
+// correct at both ends (0 at start, snapped to 1 by onFinish) — only the
+// mid-test pacing would drift.
 const TOTAL_STEPS = 15;
-
-// If no new measurement sample arrives for this long, the test is stuck (a hung
-// request, since the engine's per-request abort is disabled, or a slow-link
-// mid-size step grinding). Finalize gracefully with whatever real data exists
-// rather than make the user wait. Generous enough that a healthy test of any
-// speed — which keeps emitting samples — never trips it.
-const STALL_TIMEOUT_MS = 20_000;
 
 // Tracks the current measurement step so progress can be interpolated within it.
 interface StepState {
@@ -86,62 +71,6 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
   // Progress only ever moves forward within a run; reset on start/restart.
   const progressRef = useRef(0);
   const stepRef = useRef<StepState>({ id: 0, type: null, expected: 0, base: 0 });
-  // Stall watchdog: finalize gracefully if no new sample arrives for this long.
-  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearWatchdog = useCallback(() => {
-    if (watchdogRef.current) {
-      clearTimeout(watchdogRef.current);
-      watchdogRef.current = null;
-    }
-  }, []);
-
-  // Promote the engine's current (possibly partial) results to a finished state.
-  // Used by the stall watchdog and by the manual "finish now" control, so a slow
-  // or stuck test still yields a real reading instead of hanging. Safe to store:
-  // the measurement provenance (sample counts, confidence) tags it as lower-sample.
-  const finalizeFromCurrent = useCallback(() => {
-    const engine = engineRef.current;
-    if (!engine) return;
-    clearWatchdog();
-    try { engine.pause(); } catch { /* engine may already be stopped */ }
-    const r = engine.results;
-    const safe = <T,>(fn: () => T, fallback: T): T => {
-      try { return fn(); } catch { return fallback; }
-    };
-    progressRef.current = 1;
-    setState((prev) => {
-      if (prev.status === 'done' || prev.status === 'error') return prev;
-      return {
-        ...prev,
-        status: 'done',
-        summary: safe(() => r.getSummary(), prev.summary),
-        scores: safe(() => r.getScores(), prev.scores),
-        downloadPoints: r.getDownloadBandwidthPoints(),
-        uploadPoints: r.getUploadBandwidthPoints(),
-        unloadedLatencyPoints: r.getUnloadedLatencyPoints(),
-        downLoadedLatencyPoints: r.getDownLoadedLatencyPoints(),
-        upLoadedLatencyPoints: r.getUpLoadedLatencyPoints(),
-        currentPhase: null,
-        progress: 1,
-        durationMs: safe(() => r.getTotalDurationMs(), prev.durationMs) ?? prev.durationMs,
-      };
-    });
-  }, [clearWatchdog]);
-
-  // Kept in a ref so the engine's long-lived callbacks always call the latest one
-  // without forcing createEngine to re-run.
-  const finalizeRef = useRef(finalizeFromCurrent);
-  finalizeRef.current = finalizeFromCurrent;
-
-  // Re-arm the no-sample stall timer. A healthy test of any speed keeps emitting
-  // samples (so this never fires); a single request hung by the engine's disabled
-  // per-request abort, or a mid-size step grinding on a slow link, emits none —
-  // that's what we catch.
-  const armWatchdog = useCallback(() => {
-    if (watchdogRef.current) clearTimeout(watchdogRef.current);
-    watchdogRef.current = setTimeout(() => finalizeRef.current(), STALL_TIMEOUT_MS);
-  }, []);
 
   // Lazily create engine (browser-only)
   const createEngine = useCallback(async () => {
@@ -223,14 +152,12 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
         'count' in measurement && typeof measurement.count === 'number' ? measurement.count : 0;
       stepRef.current = { id: measurementId, type, expected, base: sampleCount(r, type) };
       const progress = recomputeProgress(r);
-      armWatchdog(); // advancing a step counts as progress
       setState((prev) => ({ ...prev, currentPhase: type, progress }));
     };
 
     engine.onResultsChange = ({ type }) => {
       const r = engine.results;
       const progress = recomputeProgress(r);
-      armWatchdog(); // a fresh sample arrived — reset the stall timer
       setState((prev) => ({
         ...prev,
         summary: r.getSummary(),
@@ -245,7 +172,6 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
     };
 
     engine.onFinish = (results) => {
-      clearWatchdog();
       progressRef.current = 1;
       setState((prev) => ({
         ...prev,
@@ -278,14 +204,13 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
         if (hasData || prev.status === 'done') {
           return { ...prev, error: message };
         }
-        clearWatchdog();
         return { ...prev, status: 'error', error: message };
       });
     };
 
     engineRef.current = engine;
     return engine;
-  }, [downloadUrl, uploadUrl, armWatchdog, clearWatchdog]);
+  }, [downloadUrl, uploadUrl]);
 
   const start = useCallback(async () => {
     progressRef.current = 0;
@@ -342,40 +267,29 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
 
     const engine = await createEngine();
     engine.play();
-    armWatchdog(); // start the stall timer once the run is under way
-  }, [createEngine, armWatchdog]);
+  }, [createEngine]);
 
   const pause = useCallback(() => {
-    clearWatchdog(); // a paused test shouldn't auto-finalize
     engineRef.current?.pause();
     setState((prev) => ({ ...prev, status: 'paused' }));
-  }, [clearWatchdog]);
+  }, []);
 
   const resume = useCallback(() => {
     engineRef.current?.play();
-    armWatchdog();
     setState((prev) => ({ ...prev, status: 'running' }));
-  }, [armWatchdog]);
+  }, []);
 
   const restart = useCallback(async () => {
-    clearWatchdog();
     engineRef.current?.pause();
     engineRef.current = null;
     await start();
-  }, [start, clearWatchdog]);
-
-  // Stop the test now and keep whatever has been measured (manual escape hatch
-  // for an impatient or very slow connection).
-  const finishNow = useCallback(() => {
-    finalizeFromCurrent();
-  }, [finalizeFromCurrent]);
+  }, [start]);
 
   useEffect(() => {
     return () => {
-      clearWatchdog();
       // No explicit destroy on the engine — just let it GC
     };
-  }, [clearWatchdog]);
+  }, []);
 
-  return { state, start, pause, resume, restart, finishNow };
+  return { state, start, pause, resume, restart };
 }
