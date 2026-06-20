@@ -1,19 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  BandwidthPoint,
-  MeasurementConfig,
-  MeasurementSummary,
-  Scores,
-} from '@cloudflare/speedtest';
+import type { BandwidthPoint, MeasurementSummary, Scores } from '@cloudflare/speedtest';
 
 export type TestStatus = 'idle' | 'running' | 'paused' | 'done' | 'error';
 
 /**
- * Which measurement profile the engine ran. 'full' is Cloudflare's default
- * progressive profile (100kB → 250MB). 'lite' is our trimmed profile for slow /
- * metered links — see pickProfile() below.
+ * Which measurement profile the engine ran. Every connection currently runs the
+ * full Cloudflare default profile (100kB → 250MB); the field is kept as
+ * provenance so a lighter profile could be reintroduced later without a schema change.
  */
 export type MeasurementProfile = 'full' | 'lite';
 
@@ -59,81 +54,23 @@ const initialState: SpeedTestState = {
   profile: 'full',
 };
 
-// ---------------------------------------------------------------------------
-// Measurement profiles
-// ---------------------------------------------------------------------------
+// Total number of measurement steps in the engine's default progressive
+// profile (@cloudflare/speedtest 1.10.1). Progress MUST be anchored to the step
+// index — not the phase type — because the engine interleaves download and upload
+// steps and keeps the heaviest transfers (100MB/250MB download, 50MB upload) for
+// last; otherwise the first small upload chunk is mistaken for "deep into the
+// test" and the bar races to ~90% while most of the work remains. The engine
+// stores its config in a private field, so this count can't be read at runtime;
+// if a future version changes the profile the bar is still correct at both ends
+// (0 at start, snapped to 1 by onFinish) — only mid-test pacing would drift.
+const TOTAL_STEPS = 15;
 
-// Lite profile for slow / metered links (mobile data on 2G/3G, Data Saver, or a
-// measured downlink under ~2 Mbps). The full default profile escalates to
-// 250 MB transfers and — crucially — runs every step's full `count` BEFORE the
-// engine decides the link is too slow to continue, so a 1 Mbps user grinds
-// through the 1MB and 10MB steps (tens of seconds, tens of MB) before bailing.
-//
-// Lite caps the payload at 100 KB. On a slow link a 100 KB transfer still lasts
-// well over a second — past TCP slow-start — so the bandwidth estimate stays
-// sound while total data drops to ~1 MB and total time to well under the default.
-// We also drop the WebRTC packet-loss step (TURN is frequently blocked on mobile
-// and adds a multi-second stall). Uploads run before any larger work so a
-// dead-link abort still leaves a usable up/down/latency reading.
-const LITE_MEASUREMENTS: MeasurementConfig[] = [
-  { type: 'latency', numPackets: 1 },
-  { type: 'download', bytes: 1e5, count: 1, bypassMinDuration: true },
-  { type: 'latency', numPackets: 8 },
-  { type: 'download', bytes: 1e5, count: 6 },
-  { type: 'upload', bytes: 1e5, count: 4 },
-];
-
-const FULL_TOTAL_STEPS = 15; // @cloudflare/speedtest 1.10.1 default profile
-
-interface NetworkInformationLite {
-  effectiveType?: string;
-  saveData?: boolean;
-  downlink?: number;
-}
-
-/**
- * Pick the measurement profile from the Network Information API. Returns the
- * default (full) profile for normal/fast links — leaving `measurements` unset so
- * the engine uses Cloudflare's own profile and results match speed.cloudflare.com.
- * Returns the lite profile (with a dead-link abort ceiling) for slow/metered links.
- */
-function pickProfile(): {
-  name: MeasurementProfile;
-  measurements?: MeasurementConfig[];
-  totalSteps: number;
-  // Per-request hard ceiling (ms). 0 = disabled (engine default). Only set on
-  // lite, where the max payload is small enough that exceeding this means a
-  // near-dead link. NOTE: in the engine this aborts the WHOLE test, so it must
-  // never be low enough to trip a legitimate transfer.
-  abortMs: number;
-} {
-  const conn = (navigator as Navigator & { connection?: NetworkInformationLite })
-    .connection;
-  const slow =
-    !!conn &&
-    (conn.saveData === true ||
-      conn.effectiveType === 'slow-2g' ||
-      conn.effectiveType === '2g' ||
-      conn.effectiveType === '3g' ||
-      (typeof conn.downlink === 'number' && conn.downlink > 0 && conn.downlink < 2));
-
-  if (!slow) return { name: 'full', totalSteps: FULL_TOTAL_STEPS, abortMs: 0 };
-  return {
-    name: 'lite',
-    measurements: LITE_MEASUREMENTS,
-    totalSteps: LITE_MEASUREMENTS.length,
-    abortMs: 8000,
-  };
-}
-
-// Progress MUST be anchored to the step index — not to the phase type — because
-// the engine interleaves download and upload steps and keeps the heaviest
-// transfers for last; otherwise the first small upload chunk is mistaken for
-// "deep into the test" and the bar races to ~90% while most of the work remains.
-// The total step count depends on the active profile (15 for the full default,
-// fewer for lite), so it's tracked per-run in totalStepsRef rather than a const.
-// If a future engine version changes the full profile the bar is still correct
-// at both ends (0 at start, snapped to 1 by onFinish) — only mid-test pacing drifts.
+// If no new measurement sample arrives for this long, the test is stuck (a hung
+// request, since the engine's per-request abort is disabled, or a slow-link
+// mid-size step grinding). Finalize gracefully with whatever real data exists
+// rather than make the user wait. Generous enough that a healthy test of any
+// speed — which keeps emitting samples — never trips it.
+const STALL_TIMEOUT_MS = 20_000;
 
 // Tracks the current measurement step so progress can be interpolated within it.
 interface StepState {
@@ -149,8 +86,62 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
   // Progress only ever moves forward within a run; reset on start/restart.
   const progressRef = useRef(0);
   const stepRef = useRef<StepState>({ id: 0, type: null, expected: 0, base: 0 });
-  // Total measurement steps for the active profile (set when the engine is built).
-  const totalStepsRef = useRef(FULL_TOTAL_STEPS);
+  // Stall watchdog: finalize gracefully if no new sample arrives for this long.
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogRef.current) {
+      clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  }, []);
+
+  // Promote the engine's current (possibly partial) results to a finished state.
+  // Used by the stall watchdog and by the manual "finish now" control, so a slow
+  // or stuck test still yields a real reading instead of hanging. Safe to store:
+  // the measurement provenance (sample counts, confidence) tags it as lower-sample.
+  const finalizeFromCurrent = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    clearWatchdog();
+    try { engine.pause(); } catch { /* engine may already be stopped */ }
+    const r = engine.results;
+    const safe = <T,>(fn: () => T, fallback: T): T => {
+      try { return fn(); } catch { return fallback; }
+    };
+    progressRef.current = 1;
+    setState((prev) => {
+      if (prev.status === 'done' || prev.status === 'error') return prev;
+      return {
+        ...prev,
+        status: 'done',
+        summary: safe(() => r.getSummary(), prev.summary),
+        scores: safe(() => r.getScores(), prev.scores),
+        downloadPoints: r.getDownloadBandwidthPoints(),
+        uploadPoints: r.getUploadBandwidthPoints(),
+        unloadedLatencyPoints: r.getUnloadedLatencyPoints(),
+        downLoadedLatencyPoints: r.getDownLoadedLatencyPoints(),
+        upLoadedLatencyPoints: r.getUpLoadedLatencyPoints(),
+        currentPhase: null,
+        progress: 1,
+        durationMs: safe(() => r.getTotalDurationMs(), prev.durationMs) ?? prev.durationMs,
+      };
+    });
+  }, [clearWatchdog]);
+
+  // Kept in a ref so the engine's long-lived callbacks always call the latest one
+  // without forcing createEngine to re-run.
+  const finalizeRef = useRef(finalizeFromCurrent);
+  finalizeRef.current = finalizeFromCurrent;
+
+  // Re-arm the no-sample stall timer. A healthy test of any speed keeps emitting
+  // samples (so this never fires); a single request hung by the engine's disabled
+  // per-request abort, or a mid-size step grinding on a slow link, emits none —
+  // that's what we catch.
+  const armWatchdog = useCallback(() => {
+    if (watchdogRef.current) clearTimeout(watchdogRef.current);
+    watchdogRef.current = setTimeout(() => finalizeRef.current(), STALL_TIMEOUT_MS);
+  }, []);
 
   // Lazily create engine (browser-only)
   const createEngine = useCallback(async () => {
@@ -173,21 +164,6 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
       bandwidthPercentile: 0.9, // download/upload reported at p90 (Cloudflare default)
       latencyPercentile: 0.5, // latency reported at p50/median (Cloudflare default)
     };
-
-    // Slow / metered links get the trimmed lite profile so the test stays short
-    // and light instead of grinding through the full profile's MB-scale steps.
-    // Normal links keep `measurements` UNSET so the engine runs Cloudflare's own
-    // profile (results match speed.cloudflare.com by construction).
-    const profile = pickProfile();
-    if (profile.measurements) {
-      config.measurements = profile.measurements;
-      // Dead-link ceiling: aborts the run if a single small request hangs past
-      // this. Engine default is 0 (off); only enabled on lite, where the small
-      // payload makes a long request a sign of a near-dead connection.
-      if (profile.abortMs > 0) config.bandwidthAbortRequestDuration = profile.abortMs;
-    }
-    totalStepsRef.current = profile.totalSteps;
-    setState((prev) => ({ ...prev, profile: profile.name }));
 
     // Prefer explicit args, then env-configured self-hosted worker, else CF defaults.
     const workerBase = (downloadUrl || uploadUrl)
@@ -232,7 +208,7 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
         const got = sampleCount(r, s.type) - s.base;
         frac = Math.min(1, Math.max(0, got / s.expected));
       }
-      const raw = (s.id + frac) / totalStepsRef.current;
+      const raw = (s.id + frac) / TOTAL_STEPS;
       progressRef.current = Math.min(0.98, Math.max(progressRef.current, raw));
       return progressRef.current;
     };
@@ -247,12 +223,14 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
         'count' in measurement && typeof measurement.count === 'number' ? measurement.count : 0;
       stepRef.current = { id: measurementId, type, expected, base: sampleCount(r, type) };
       const progress = recomputeProgress(r);
+      armWatchdog(); // advancing a step counts as progress
       setState((prev) => ({ ...prev, currentPhase: type, progress }));
     };
 
     engine.onResultsChange = ({ type }) => {
       const r = engine.results;
       const progress = recomputeProgress(r);
+      armWatchdog(); // a fresh sample arrived — reset the stall timer
       setState((prev) => ({
         ...prev,
         summary: r.getSummary(),
@@ -267,6 +245,7 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
     };
 
     engine.onFinish = (results) => {
+      clearWatchdog();
       progressRef.current = 1;
       setState((prev) => ({
         ...prev,
@@ -299,18 +278,18 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
         if (hasData || prev.status === 'done') {
           return { ...prev, error: message };
         }
+        clearWatchdog();
         return { ...prev, status: 'error', error: message };
       });
     };
 
     engineRef.current = engine;
     return engine;
-  }, [downloadUrl, uploadUrl]);
+  }, [downloadUrl, uploadUrl, armWatchdog, clearWatchdog]);
 
   const start = useCallback(async () => {
     progressRef.current = 0;
     stepRef.current = { id: 0, type: null, expected: 0, base: 0 };
-    totalStepsRef.current = FULL_TOTAL_STEPS; // re-derived in createEngine()
     setState({ ...initialState, status: 'running' });
 
     // ISP / ASN / client IP come from our api worker (accurate regardless of which
@@ -363,29 +342,40 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
 
     const engine = await createEngine();
     engine.play();
-  }, [createEngine]);
+    armWatchdog(); // start the stall timer once the run is under way
+  }, [createEngine, armWatchdog]);
 
   const pause = useCallback(() => {
+    clearWatchdog(); // a paused test shouldn't auto-finalize
     engineRef.current?.pause();
     setState((prev) => ({ ...prev, status: 'paused' }));
-  }, []);
+  }, [clearWatchdog]);
 
   const resume = useCallback(() => {
     engineRef.current?.play();
+    armWatchdog();
     setState((prev) => ({ ...prev, status: 'running' }));
-  }, []);
+  }, [armWatchdog]);
 
   const restart = useCallback(async () => {
+    clearWatchdog();
     engineRef.current?.pause();
     engineRef.current = null;
     await start();
-  }, [start]);
+  }, [start, clearWatchdog]);
+
+  // Stop the test now and keep whatever has been measured (manual escape hatch
+  // for an impatient or very slow connection).
+  const finishNow = useCallback(() => {
+    finalizeFromCurrent();
+  }, [finalizeFromCurrent]);
 
   useEffect(() => {
     return () => {
+      clearWatchdog();
       // No explicit destroy on the engine — just let it GC
     };
-  }, []);
+  }, [clearWatchdog]);
 
-  return { state, start, pause, resume, restart };
+  return { state, start, pause, resume, restart, finishNow };
 }

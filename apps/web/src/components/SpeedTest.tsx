@@ -61,6 +61,7 @@ export function SpeedTest() {
     pause,
     resume,
     restart,
+    finishNow,
   } = useSpeedTest();
 
   const isRunning = status === 'running';
@@ -278,6 +279,12 @@ export function SpeedTest() {
           ) : isPaused ? (
             <ActionBtn onClick={resume} icon={<Play className="h-4 w-4" />} label="Resume" />
           ) : null}
+
+          {/* Escape hatch for a slow connection: stop and keep the result so far.
+              Only once there's something measured to keep. */}
+          {(isRunning || isPaused) && (downloadPoints.length > 0 || uploadPoints.length > 0) && (
+            <ActionBtn onClick={finishNow} icon={<Server className="h-4 w-4" />} label="Finish now" />
+          )}
 
           <ActionBtn onClick={handleRetest} icon={<RotateCcw className="h-4 w-4" />} label="Retest" />
 
