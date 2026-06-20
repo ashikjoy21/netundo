@@ -32,6 +32,7 @@ export function SpeedTest() {
   const [district, setDistrict] = useState('');
   const [connType, setConnType] = useState<ConnectionType>('wifi');
   const [coords, setCoords] = useState<GeoCoords | null>(null);
+  const [taluk, setTaluk] = useState('');
   const [localArea, setLocalArea] = useState('');
   const [planMbps, setPlanMbps] = useState<number | null>(null);
   const [resultSubmitted, setResultSubmitted] = useState(false);
@@ -80,11 +81,19 @@ export function SpeedTest() {
     return niceAxis(maxBps || 100_000_000);
   }, [uploadPoints]);
 
-  const handleStart = async (d: string, ct: ConnectionType, c: GeoCoords | null, area: string, plan: number | null) => {
+  const handleStart = async (
+    d: string,
+    ct: ConnectionType,
+    c: GeoCoords | null,
+    tk: string,
+    village: string,
+    plan: number | null,
+  ) => {
     setDistrict(d);
     setConnType(ct);
     setCoords(c);
-    setLocalArea(area);
+    setTaluk(tk);
+    setLocalArea(village);
     setPlanMbps(plan);
     setAppState('testing');
     setResultSubmitted(false);
@@ -124,8 +133,8 @@ export function SpeedTest() {
             userAgent: navigator.userAgent,
           },
           location: coords
-            ? { district, taluk: localArea || undefined, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM }
-            : { district, taluk: localArea || undefined },
+            ? { district, taluk: taluk || undefined, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM }
+            : { district, taluk: taluk || undefined },
           plan: planMbps ? { advertisedMbps: planMbps } : undefined,
           consent: { sharePublicly: true, shareExactLocation: !!coords },
         }),
@@ -268,7 +277,7 @@ export function SpeedTest() {
 
           {isDone && (
             <span className="ml-auto text-xs text-gray-400">
-              Measured at {new Date().toLocaleTimeString()} · {localArea ? `${localArea}, ` : ''}{district} · {connType}
+              Measured at {new Date().toLocaleTimeString()} · {[localArea, taluk].filter(Boolean).join(', ')}{(localArea || taluk) ? ', ' : ''}{district} · {connType}
             </span>
           )}
         </div>

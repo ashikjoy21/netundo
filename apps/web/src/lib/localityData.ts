@@ -42,6 +42,12 @@ export interface TalukData {
   indexable: boolean;
 }
 
+/** Historical rows stored taluk as "Taluk / Village"; take the taluk segment so
+ *  both clean and legacy values slug-match the canonical taluk name. */
+export function canonicalTalukName(raw: string): string {
+  return raw.split('/')[0].trim();
+}
+
 let cachedRows: Promise<TalukAggRow[]> | null = null;
 
 /** Memoized, build-time fetch of every taluk aggregate row. */
@@ -91,7 +97,7 @@ export async function getTalukData(
     (r) =>
       r.district === place.district &&
       r.taluk != null &&
-      slugify(r.taluk) === place.talukSlug,
+      slugify(canonicalTalukName(r.taluk)) === place.talukSlug,
   );
 
   const broadband = summarize(rows.filter((r) => r.connection_type === 'wifi' || r.connection_type === 'wired'));
@@ -136,7 +142,7 @@ export async function getDistrictData(districtSlug: string): Promise<DistrictDat
   const taluks: TalukSummary[] = place.taluks.map((taluk) => {
     const slug = slugify(taluk);
     const rows = allRows.filter(
-      (r) => r.district === place.district && r.taluk != null && slugify(r.taluk) === slug,
+      (r) => r.district === place.district && r.taluk != null && slugify(canonicalTalukName(r.taluk)) === slug,
     );
     const summary = summarize(rows);
     return { name: taluk, slug, totalSamples: summary.samples, downloadMbps: summary.downloadMbps };

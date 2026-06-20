@@ -19,7 +19,8 @@ interface Props {
     district: string,
     connectionType: ConnectionType,
     coords: GeoCoords | null,
-    localArea: string,
+    taluk: string,
+    village: string,
     planMbps: number | null,
   ) => void;
 }
@@ -166,26 +167,37 @@ export function DistrictPicker({ onConfirm }: Props) {
         </div>
 
         {showManualFallback && (
+          <label className="mt-3 block">
+            <span className="mb-1.5 block text-xs font-semibold text-gray-600">District</span>
+            <select
+              value={district}
+              onChange={(event) => {
+                setDistrict(event.target.value);
+                setTaluk('');
+                setLocalArea('');
+                setManualMode(true);
+                setCoords(null);
+              }}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-cf-orange focus:outline-none focus:ring-2 focus:ring-cf-orange/40"
+            >
+              <option value="">Select district</option>
+              {KERALA_DISTRICTS.map((item) => (
+                <option key={item} value={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* Taluk + village. Shown whenever a district is known — including after
+            GPS detection — so results attach to the right locality page. In GPS
+            mode picking these refines the result without discarding the pin. */}
+        {district && (
           <div className="mt-3 grid gap-3">
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-semibold text-gray-600">District</span>
-              <select
-                value={district}
-                onChange={(event) => {
-                  setDistrict(event.target.value);
-                  setTaluk('');
-                  setLocalArea('');
-                  setManualMode(true);
-                  setCoords(null);
-                }}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-cf-orange focus:outline-none focus:ring-2 focus:ring-cf-orange/40"
-              >
-                <option value="">Select district</option>
-                {KERALA_DISTRICTS.map((item) => (
-                  <option key={item} value={item}>{item}</option>
-                ))}
-              </select>
-            </label>
+            {coords && !showManualFallback && (
+              <p className="text-xs text-gray-500">
+                Refine your area in {district} <span className="text-gray-400">(optional, helps your locality page)</span>
+              </p>
+            )}
             <label className="block">
               <span className="mb-1.5 block text-xs font-semibold text-gray-600">Taluk</span>
               <select
@@ -193,8 +205,6 @@ export function DistrictPicker({ onConfirm }: Props) {
                 onChange={(event) => {
                   setTaluk(event.target.value);
                   setLocalArea('');
-                  setManualMode(true);
-                  setCoords(null);
                 }}
                 disabled={!district}
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-cf-orange focus:outline-none focus:ring-2 focus:ring-cf-orange/40 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
@@ -211,11 +221,7 @@ export function DistrictPicker({ onConfirm }: Props) {
               <span className="mb-1.5 block text-xs font-semibold text-gray-600">Village</span>
               <select
                 value={localArea}
-                onChange={(event) => {
-                  setLocalArea(event.target.value);
-                  setManualMode(true);
-                  setCoords(null);
-                }}
+                onChange={(event) => setLocalArea(event.target.value)}
                 disabled={!district || !taluk}
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:border-cf-orange focus:outline-none focus:ring-2 focus:ring-cf-orange/40 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
               >
@@ -315,7 +321,7 @@ export function DistrictPicker({ onConfirm }: Props) {
       </div>
 
       <button
-        onClick={() => ready && onConfirm(district, connType, coords, taluk && localArea ? `${taluk} / ${localArea}` : '', planMbps)}
+        onClick={() => ready && onConfirm(district, connType, coords, taluk, localArea, planMbps)}
         disabled={!ready}
         className="w-full py-3 rounded-lg bg-cf-orange text-white font-semibold text-sm transition-all hover:bg-cf-orange-dark disabled:opacity-40 disabled:cursor-not-allowed"
       >
