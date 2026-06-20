@@ -45,38 +45,24 @@ const initialState: SpeedTestState = {
   clientIp: null,
 };
 
-// Saturating 0→1 curve: rises fast then eases toward 1 as `n` grows, never
-// reaching it. `halfLife` is the count at which it hits 0.5.
-function saturate(n: number, halfLife: number): number {
-  if (n <= 0) return 0;
-  return 1 - Math.pow(2, -n / halfLife);
-}
+// Total number of measurement steps in the engine's default progressive
+// profile (@cloudflare/speedtest 1.10.1). The engine interleaves download and
+// upload steps and keeps the heaviest transfers (100MB/250MB download, 50MB
+// upload) for last, so progress MUST be anchored to the step index — not to the
+// phase type — otherwise the first small upload chunk (step 5 of 15) is mistaken
+// for "deep into the test" and the bar races to ~90% while most of the work
+// remains. The engine stores its config in a private field, so this count can't
+// be read at runtime; if a future version changes the profile the bar is still
+// correct at both ends (0 at start, snapped to 1 by onFinish) — only the
+// mid-test pacing would drift.
+const TOTAL_STEPS = 15;
 
-// Phase-anchored progress estimate (0–1). Keyed on the measurement *phase* and
-// the number of data points received so far, NOT on a timer — so the bar moves
-// forward monotonically and never runs ahead of the real measurement. The true
-// "done" (1.0) is set separately from the engine's onFinish, independent of
-// this estimate. Bands: latency 0–15%, download 15–60%, upload 60–95%,
-// finalizing 95–99%.
-function estimateProgress(
-  phase: string | null,
-  downloadCount: number,
-  uploadCount: number,
-  latencyCount: number,
-): number {
-  // Upload is the last long phase — once it has points, we're in 60–95%.
-  if (uploadCount > 0 || phase === 'upload') {
-    return 0.6 + 0.35 * saturate(uploadCount, 10);
-  }
-  // Download phase: 15–60%.
-  if (downloadCount > 0 || phase === 'download') {
-    return 0.15 + 0.45 * saturate(downloadCount, 14);
-  }
-  // Latency / startup: 2–15%.
-  if (latencyCount > 0 || phase === 'latency' || phase === 'latencyUnderLoad') {
-    return 0.02 + 0.13 * saturate(latencyCount, 4);
-  }
-  return 0.02;
+// Tracks the current measurement step so progress can be interpolated within it.
+interface StepState {
+  id: number; // measurementId: index into the engine's measurements array
+  type: string | null; // 'latency' | 'download' | 'upload' | 'packetLoss' | …
+  expected: number; // number of samples this step will collect (0 if unknown)
+  base: number; // cumulative sample count of this type when the step started
 }
 
 export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
@@ -84,6 +70,7 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
   const engineRef = useRef<import('@cloudflare/speedtest').default | null>(null);
   // Progress only ever moves forward within a run; reset on start/restart.
   const progressRef = useRef(0);
+  const stepRef = useRef<StepState>({ id: 0, type: null, expected: 0, base: 0 });
 
   // Lazily create engine (browser-only)
   const createEngine = useCallback(async () => {
@@ -127,45 +114,60 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
       }));
     };
 
-    // Fired when the engine advances to a new measurement step. We rely on the
-    // phase `type` (from onResultsChange) for banding, but reading the phase
-    // here too keeps the bar moving even before a phase has produced points.
-    engine.onPhaseChange = ({ measurement }) => {
-      const phase = measurement?.type ?? null;
-      setState((prev) => {
-        const next = estimateProgress(
-          phase,
-          prev.downloadPoints.length,
-          prev.uploadPoints.length,
-          prev.unloadedLatencyPoints.length,
-        );
-        progressRef.current = Math.max(progressRef.current, next);
-        return { ...prev, currentPhase: phase, progress: progressRef.current };
-      });
+    // Number of samples of a given measurement type collected so far. Used to
+    // interpolate progress within the current step.
+    const sampleCount = (
+      r: import('@cloudflare/speedtest').Results,
+      type: string | null,
+    ): number => {
+      if (type === 'download') return r.getDownloadBandwidthPoints().length;
+      if (type === 'upload') return r.getUploadBandwidthPoints().length;
+      if (type === 'latency') return r.getUnloadedLatencyPoints().length;
+      return 0;
+    };
+
+    // Step-anchored progress (0–1), monotonic, capped below 1 so only onFinish
+    // can reach 100%. Base = step index / total steps; within a step we add the
+    // fraction of its expected samples already collected, so the bar advances
+    // smoothly through each step instead of jumping.
+    const recomputeProgress = (r: import('@cloudflare/speedtest').Results) => {
+      const s = stepRef.current;
+      let frac = 0;
+      if (s.expected > 0) {
+        const got = sampleCount(r, s.type) - s.base;
+        frac = Math.min(1, Math.max(0, got / s.expected));
+      }
+      const raw = (s.id + frac) / TOTAL_STEPS;
+      progressRef.current = Math.min(0.98, Math.max(progressRef.current, raw));
+      return progressRef.current;
+    };
+
+    // Fired when the engine advances to a new measurement step. measurementId is
+    // the step's index in the engine's measurements array — the ground truth for
+    // how far through the test we are.
+    engine.onPhaseChange = ({ measurementId, measurement }) => {
+      const type = measurement?.type ?? null;
+      const r = engine.results;
+      const expected =
+        'count' in measurement && typeof measurement.count === 'number' ? measurement.count : 0;
+      stepRef.current = { id: measurementId, type, expected, base: sampleCount(r, type) };
+      const progress = recomputeProgress(r);
+      setState((prev) => ({ ...prev, currentPhase: type, progress }));
     };
 
     engine.onResultsChange = ({ type }) => {
       const r = engine.results;
-      const downloadPoints = r.getDownloadBandwidthPoints();
-      const uploadPoints = r.getUploadBandwidthPoints();
-      const unloadedLatencyPoints = r.getUnloadedLatencyPoints();
-      const next = estimateProgress(
-        type,
-        downloadPoints.length,
-        uploadPoints.length,
-        unloadedLatencyPoints.length,
-      );
-      progressRef.current = Math.min(0.99, Math.max(progressRef.current, next));
+      const progress = recomputeProgress(r);
       setState((prev) => ({
         ...prev,
         summary: r.getSummary(),
-        downloadPoints,
-        uploadPoints,
-        unloadedLatencyPoints,
+        downloadPoints: r.getDownloadBandwidthPoints(),
+        uploadPoints: r.getUploadBandwidthPoints(),
+        unloadedLatencyPoints: r.getUnloadedLatencyPoints(),
         downLoadedLatencyPoints: r.getDownLoadedLatencyPoints(),
         upLoadedLatencyPoints: r.getUpLoadedLatencyPoints(),
         currentPhase: type,
-        progress: progressRef.current,
+        progress,
       }));
     };
 
@@ -197,6 +199,7 @@ export function useSpeedTest(downloadUrl?: string, uploadUrl?: string) {
 
   const start = useCallback(async () => {
     progressRef.current = 0;
+    stepRef.current = { id: 0, type: null, expected: 0, base: 0 };
     setState({ ...initialState, status: 'running' });
 
     // ISP / ASN / client IP come from our api worker (accurate regardless of which
