@@ -173,14 +173,16 @@ export function SpeedTest() {
       <section>
         <h2 className="text-lg font-semibold text-gray-800 mb-4">Your Internet Speed</h2>
 
-        {/* Progress bar — running / paused / done */}
+        {/* Progress bar — sticky on mobile so it stays visible while charts scroll */}
         {(isRunning || isPaused || isDone) && (
-          <ProgressBar
-            progress={isDone ? 1 : progress}
-            phaseLabel={phaseLabel}
-            status={status}
-            durationMs={durationMs}
-          />
+          <div className="sticky top-[4.75rem] z-20 -mx-4 mb-4 border-b border-gray-100 bg-white/95 px-4 pb-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0 sm:pb-0 sm:backdrop-blur-none">
+            <ProgressBar
+              progress={isDone ? 1 : progress}
+              phaseLabel={phaseLabel}
+              status={status}
+              durationMs={durationMs}
+            />
+          </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-6 items-start">
@@ -463,30 +465,31 @@ function ProgressBar({
       ? 'Paused'
       : phaseLabel ?? 'Starting…';
 
-  const barColor = isDone ? 'bg-green-500' : isPaused ? 'bg-gray-300' : 'bg-cf-orange';
-  const labelColor = isDone ? 'text-green-700' : isPaused ? 'text-gray-400' : 'text-gray-500';
+  const barColor = isDone ? 'bg-green-500' : isPaused ? 'bg-gray-400' : 'bg-cf-orange';
+  const labelColor = isDone ? 'text-green-700' : isPaused ? 'text-gray-500' : 'text-gray-700';
+  const fillWidth = pct === 0 ? '0%' : `${Math.max(pct, 3)}%`;
 
   return (
-    <div className="mb-4" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className={`text-xs font-medium flex items-center gap-1.5 ${labelColor}`}>
+    <div className="mb-1 sm:mb-4" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className={`text-sm font-medium flex items-center gap-1.5 min-w-0 ${labelColor}`}>
           {isDone && (
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="text-green-600">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0 text-green-600">
               <circle cx="8" cy="8" r="7" fill="currentColor" />
               <path d="M5 8.2l2 2 4-4.4" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           )}
-          {!isDone && !isPaused && <span className="w-1.5 h-1.5 rounded-full bg-cf-orange animate-pulse" />}
-          {label}
+          {!isDone && !isPaused && <span className="h-2 w-2 shrink-0 rounded-full bg-cf-orange animate-pulse" />}
+          <span className="truncate">{label}</span>
         </span>
-        <span className={`text-xs font-semibold tabular-nums ${isDone ? 'text-green-700' : 'text-gray-400'}`}>
+        <span className={`shrink-0 text-sm font-bold tabular-nums ${isDone ? 'text-green-700' : 'text-gray-700'}`}>
           {pct}%
         </span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+      <div className="h-3 w-full overflow-hidden rounded-full border border-gray-200 bg-gray-200/80 shadow-inner sm:h-2.5">
         <div
           className={`h-full rounded-full transition-[width] duration-500 ease-out ${barColor}`}
-          style={{ width: `${pct}%` }}
+          style={{ width: fillWidth }}
         />
       </div>
     </div>
