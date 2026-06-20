@@ -671,6 +671,29 @@ async function handleMlab(env: Env): Promise<Response> {
   return jsonResponse(Array.isArray(rows) ? rows : []);
 }
 
+/** GET /v1/ookla — Speedtest® by Ookla® Open Data benchmark rows (district + taluk).
+ *  Third-party CC BY-NC-SA reference data; kept separate from /v1/aggregate. */
+async function handleOokla(env: Env): Promise<Response> {
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse([], 503);
+
+  const params = new URLSearchParams({
+    select:
+      'geo_level,district,taluk,conn_type,period,download_mbps,upload_mbps,latency_ms,tests,tile_count,source',
+    order: 'district.asc',
+    limit: '1000',
+  });
+
+  const res = await supabase(`ookla_benchmarks?${params}`);
+  if (!res.ok) {
+    console.error('Supabase ookla error', res.status);
+    return jsonResponse({ error: 'Failed to fetch Ookla data' }, 502);
+  }
+
+  const rows = await res.json();
+  return jsonResponse(Array.isArray(rows) ? rows : []);
+}
+
 // ---------------------------------------------------------------------------
 // Main fetch handler
 // ---------------------------------------------------------------------------
@@ -720,6 +743,11 @@ export default {
     // GET /v1/mlab
     if (method === 'GET' && path === '/v1/mlab') {
       return handleMlab(env);
+    }
+
+    // GET /v1/ookla
+    if (method === 'GET' && path === '/v1/ookla') {
+      return handleOokla(env);
     }
 
     return jsonResponse({ error: 'Not found' }, 404);

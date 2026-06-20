@@ -243,6 +243,78 @@ export async function getMlabForTaluk(district: string, taluk: string): Promise<
   );
 }
 
+// ---------------------------------------------------------------------------
+// Ookla Open Data benchmark (CC BY-NC-SA, 610m tiles, fixed + mobile, current)
+// ---------------------------------------------------------------------------
+
+interface OoklaApiRow {
+  geo_level: 'district' | 'taluk';
+  district: string;
+  taluk: string | null;
+  conn_type: 'fixed' | 'mobile';
+  period: string;
+  download_mbps: number | null;
+  upload_mbps: number | null;
+  latency_ms: number | null;
+  tests: number | null;
+  source: string;
+}
+
+export interface OoklaMetric {
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  latencyMs: number | null;
+  tests: number;
+}
+
+export interface OoklaBenchmark {
+  period: string; // e.g. "2025-Q3"
+  source: string;
+  fixed: OoklaMetric | null;
+  mobile: OoklaMetric | null;
+}
+
+let cachedOokla: Promise<OoklaApiRow[]> | null = null;
+
+async function getAllOokla(): Promise<OoklaApiRow[]> {
+  if (cachedOokla) return cachedOokla;
+  const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
+  if (!apiBase) {
+    cachedOokla = Promise.resolve([]);
+    return cachedOokla;
+  }
+  cachedOokla = fetch(`${apiBase}/v1/ookla`)
+    .then((r) => (r.ok ? (r.json() as Promise<OoklaApiRow[]>) : []))
+    .then((rows) => (Array.isArray(rows) ? rows : []))
+    .catch(() => []);
+  return cachedOokla;
+}
+
+function shapeOokla(rows: OoklaApiRow[]): OoklaBenchmark | null {
+  if (!rows.length) return null;
+  const pick = (type: 'fixed' | 'mobile'): OoklaMetric | null => {
+    const r = rows.find((x) => x.conn_type === type);
+    if (!r || r.download_mbps == null) return null;
+    return { downloadMbps: r.download_mbps, uploadMbps: r.upload_mbps, latencyMs: r.latency_ms, tests: r.tests ?? 0 };
+  };
+  return {
+    period: rows[0].period,
+    source: rows[0].source,
+    fixed: pick('fixed'),
+    mobile: pick('mobile'),
+  };
+}
+
+export async function getOoklaForDistrict(district: string): Promise<OoklaBenchmark | null> {
+  const rows = await getAllOokla();
+  return shapeOokla(rows.filter((r) => r.geo_level === 'district' && r.district === district));
+}
+
+export async function getOoklaForTaluk(district: string, taluk: string): Promise<OoklaBenchmark | null> {
+  const rows = await getAllOokla();
+  return shapeOokla(rows.filter((r) => r.geo_level === 'taluk' && r.district === district && r.taluk === taluk));
+}
+
 function summarize(rows: AggregateRow[]): MetricSummary {
   const samples = rows.reduce((sum, r) => sum + r.sample_count, 0);
   const weighted = (field: keyof AggregateRow): number | null => {

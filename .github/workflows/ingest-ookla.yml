@@ -1,0 +1,43 @@
+name: Ingest Ookla Open Data benchmark
+
+# Loads Speedtest® by Ookla® Open Data tiles for Kerala into ookla_benchmarks.
+# Ookla publishes each quarter ~1 month after it ends, so we run early in the
+# following quarter. The ingest auto-detects the latest available quarter.
+#
+# Required repo secrets: SUPABASE_URL, SUPABASE_SERVICE_KEY
+# (Boundaries ship in the repo at scripts/data/kerala-taluks.geojson.)
+
+on:
+  schedule:
+    - cron: '0 3 5 2,5,8,11 *' # 5th of Feb/May/Aug/Nov (after Ookla publishes)
+  workflow_dispatch:
+    inputs:
+      quarter:
+        description: 'Quarter YYYY-Qn (blank = latest available)'
+        required: false
+        type: string
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run Ookla ingest
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          QUARTER: ${{ inputs.quarter }}
+        run: |
+          ARGS=""
+          if [ -n "$QUARTER" ]; then ARGS="--quarter $QUARTER"; fi
+          node scripts/ingest-ookla.mjs $ARGS
