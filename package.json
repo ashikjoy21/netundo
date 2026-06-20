@@ -12,7 +12,8 @@
     "deploy:web": "pnpm --filter=@netundo/web run deploy",
     "ingest:trai": "node scripts/ingest-trai.mjs",
     "ingest:mlab": "node scripts/ingest-mlab.mjs",
-    "ingest:ookla": "node scripts/ingest-ookla.mjs"
+    "ingest:ookla": "node scripts/ingest-ookla.mjs",
+    "ingest:mlab-tests": "node scripts/ingest-mlab-tests.mjs"
   },
   "devDependencies": {
     "@duckdb/node-api": "1.5.4-r.1",

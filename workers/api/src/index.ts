@@ -550,6 +550,9 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
       ? 'district,taluk,isp_name,asn,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at'
       : 'district,isp_name,asn,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at',
     is_outlier: 'eq.false',
+    // Real aggregates use netundo-measured tests only; third-party tests
+    // (source='mlab') are excluded so they never skew our methodology.
+    source: 'eq.netundo',
     order: 'created_at.desc',
     limit: byTaluk ? '50000' : '2000',
   });
@@ -590,12 +593,14 @@ async function handlePoints(url: URL, env: Env): Promise<Response> {
   }
 
   const params = new URLSearchParams({
-    select: 'lat,lng,download_mbps,upload_mbps,latency_ms,isp_name,asn,district,connection_type,created_at',
+    // Includes both netundo and source='mlab' points (frontend styles them
+    // distinctly) so the live map shows independent measurements too.
+    select: 'lat,lng,download_mbps,upload_mbps,latency_ms,isp_name,asn,district,connection_type,source,created_at',
     consent_public: 'eq.true',
     is_outlier: 'eq.false',
     lat: 'not.is.null',
     order: 'created_at.desc',
-    limit: '500',
+    limit: '2000',
   });
 
   const connectionType = url.searchParams.get('connection_type');
