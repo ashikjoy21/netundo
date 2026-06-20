@@ -10,7 +10,8 @@
     "deploy:speedtest": "pnpm --filter=@netundo/worker-speedtest run deploy",
     "deploy:api": "pnpm --filter=@netundo/worker-api run deploy",
     "deploy:web": "pnpm --filter=@netundo/web run deploy",
-    "ingest:trai": "node scripts/ingest-trai.mjs"
+    "ingest:trai": "node scripts/ingest-trai.mjs",
+    "ingest:mlab": "node scripts/ingest-mlab.mjs"
   },
   "devDependencies": {
     "turbo": "^2.5.4",

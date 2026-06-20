@@ -169,6 +169,80 @@ function shapeTrai(res: TraiApiResponse): TraiBenchmark | null {
   };
 }
 
+// ---------------------------------------------------------------------------
+// M-Lab independent benchmark (third-party CC0, town-level, latest ~2024)
+// ---------------------------------------------------------------------------
+
+interface MlabApiRow {
+  geo_level: 'district' | 'taluk';
+  district: string;
+  taluk: string | null;
+  mlab_locality: string;
+  match_type: 'exact' | 'alias' | 'hq_town';
+  period: string;
+  download_mbps: number | null;
+  upload_mbps: number | null;
+  latency_ms: number | null;
+  sample_count: number | null;
+  source: string;
+}
+
+export interface MlabBenchmark {
+  mlabLocality: string;
+  matchType: 'exact' | 'alias' | 'hq_town';
+  /** Year of the data, e.g. "2024". */
+  periodLabel: string;
+  source: string;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+  latencyMs: number | null;
+  sampleCount: number;
+}
+
+let cachedMlab: Promise<MlabApiRow[]> | null = null;
+
+async function getAllMlab(): Promise<MlabApiRow[]> {
+  if (cachedMlab) return cachedMlab;
+  const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
+  if (!apiBase) {
+    cachedMlab = Promise.resolve([]);
+    return cachedMlab;
+  }
+  cachedMlab = fetch(`${apiBase}/v1/mlab`)
+    .then((r) => (r.ok ? (r.json() as Promise<MlabApiRow[]>) : []))
+    .then((rows) => (Array.isArray(rows) ? rows : []))
+    .catch(() => []);
+  return cachedMlab;
+}
+
+function shapeMlab(row: MlabApiRow | undefined): MlabBenchmark | null {
+  if (!row || row.download_mbps == null) return null;
+  return {
+    mlabLocality: row.mlab_locality,
+    matchType: row.match_type,
+    periodLabel: row.period?.slice(0, 4) ?? '',
+    source: row.source,
+    downloadMbps: row.download_mbps,
+    uploadMbps: row.upload_mbps,
+    latencyMs: row.latency_ms,
+    sampleCount: row.sample_count ?? 0,
+  };
+}
+
+/** M-Lab benchmark for a district page (its principal city). */
+export async function getMlabForDistrict(district: string): Promise<MlabBenchmark | null> {
+  const rows = await getAllMlab();
+  return shapeMlab(rows.find((r) => r.geo_level === 'district' && r.district === district));
+}
+
+/** M-Lab benchmark for a taluk page (exact/alias/hq-town locality). */
+export async function getMlabForTaluk(district: string, taluk: string): Promise<MlabBenchmark | null> {
+  const rows = await getAllMlab();
+  return shapeMlab(
+    rows.find((r) => r.geo_level === 'taluk' && r.district === district && r.taluk === taluk),
+  );
+}
+
 function summarize(rows: AggregateRow[]): MetricSummary {
   const samples = rows.reduce((sum, r) => sum + r.sample_count, 0);
   const weighted = (field: keyof AggregateRow): number | null => {

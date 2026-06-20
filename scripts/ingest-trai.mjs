@@ -39,18 +39,27 @@ function parseArgs(argv) {
   return args;
 }
 
-/** First of the month (YYYY-MM-01) for the dataset period. Defaults to last month. */
+/**
+ * Resolve the dataset period to { date: 'YYYY-MM-01', year, month }.
+ * The TRAI resource is one giant multi-year table, so we must filter by year AND
+ * month — without it we would average across every month ever published.
+ * Defaults to the previous calendar month.
+ */
 function resolvePeriod(period) {
+  let year;
+  let month; // 1-12
   if (period) {
     if (!/^\d{4}-\d{2}$/.test(period)) {
       throw new Error(`--period must be YYYY-MM, got: ${period}`);
     }
-    return `${period}-01`;
+    [year, month] = period.split('-').map(Number);
+  } else {
+    const now = new Date();
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    year = d.getUTCFullYear();
+    month = d.getUTCMonth() + 1;
   }
-  const now = new Date();
-  // TRAI publishes a month or two behind; default to the previous calendar month.
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-  return d.toISOString().slice(0, 10);
+  return { date: `${year}-${String(month).padStart(2, '0')}-01`, year, month };
 }
 
 // --- field normalisation ---------------------------------------------------
@@ -70,7 +79,7 @@ const OPERATOR_ALIASES = [
   [/jio|reliance/i, 'Jio'],
   [/airtel|bharti/i, 'Airtel'],
   [/\bvi\b|vodafone|idea/i, 'Vi'],
-  [/bsnl/i, 'BSNL'],
+  [/bsnl|cellone|cell one/i, 'BSNL'], // CELLONE is BSNL's mobile brand
   [/mtnl/i, 'MTNL'],
 ];
 
@@ -109,10 +118,12 @@ export function aggregateTraiRows(rawRows, period, lsa = LSA) {
   const groups = new Map();
 
   for (const r of rawRows) {
-    const operator = canonicalOperator(pick(r, ['service provider', 'operator', 'provider']));
+    const operator = canonicalOperator(pick(r, ['operator', 'service provider', 'provider']));
     const technology = canonicalTechnology(pick(r, ['technology', 'network technology']));
-    const direction = canonicalDirection(pick(r, ['test type', 'type', 'direction']));
-    const kbps = Number(pick(r, ['data speed(kbps)', 'data speed', 'speed', 'data_speed']));
+    // The TRAI schema names the direction column "download"; its VALUE is
+    // 'download' or 'upload'. Fall back to the older 'test type' naming too.
+    const direction = canonicalDirection(pick(r, ['download', 'test type', 'test_type', 'type', 'direction']));
+    const kbps = Number(pick(r, ['speed_kbps', 'data speed(kbps)', 'data speed', 'data_speed', 'speed']));
 
     if (!operator || !technology || !direction || !Number.isFinite(kbps) || kbps <= 0) {
       continue; // skip malformed / unparseable samples
@@ -141,7 +152,29 @@ export function aggregateTraiRows(rawRows, period, lsa = LSA) {
 
 // --- data.gov.in fetch ------------------------------------------------------
 
-async function fetchAllKeralaRows(resourceId, apiKey) {
+/** fetch with retry + backoff — data.gov.in occasionally drops connections. */
+async function fetchWithRetry(url, attempts = 4) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      if (!res.ok) {
+        throw new Error(`data.gov.in returned ${res.status}: ${await res.text()}`);
+      }
+      return res;
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) {
+        const wait = 1000 * 2 ** i; // 1s, 2s, 4s
+        console.warn(`  fetch attempt ${i + 1} failed (${err.message}); retrying in ${wait}ms…`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+async function fetchAllKeralaRows(resourceId, apiKey, year, month) {
   const rows = [];
   let offset = 0;
 
@@ -151,21 +184,24 @@ async function fetchAllKeralaRows(resourceId, apiKey) {
     url.searchParams.set('format', 'json');
     url.searchParams.set('limit', String(PAGE_LIMIT));
     url.searchParams.set('offset', String(offset));
-    // Server-side filter to the Kerala circle. Field key casing varies across
-    // datasets, so we also filter defensively below.
+    // Server-side filters. The resource spans every month/year, so year+month are
+    // essential. We also filter defensively client-side in case the server ignores
+    // any filter (which would otherwise average across the entire history).
     url.searchParams.set('filters[lsa]', LSA);
+    url.searchParams.set('filters[year]', String(year));
+    url.searchParams.set('filters[month]', String(month));
 
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`data.gov.in returned ${res.status}: ${await res.text()}`);
-    }
+    const res = await fetchWithRetry(url);
     const body = await res.json();
     const batch = Array.isArray(body.records) ? body.records : [];
 
-    // Defensive client-side LSA filter in case the server filter was ignored.
     for (const r of batch) {
       const lsa = pick(r, ['lsa', 'circle', 'service area']);
-      if (!lsa || String(lsa).toLowerCase().includes('kerala')) rows.push(r);
+      const rowYear = Number(pick(r, ['year']));
+      const rowMonth = Number(pick(r, ['month']));
+      const lsaOk = !lsa || String(lsa).toLowerCase().includes('kerala');
+      const periodOk = rowYear === year && rowMonth === month;
+      if (lsaOk && periodOk) rows.push(r);
     }
 
     if (batch.length < PAGE_LIMIT) break;
@@ -205,13 +241,13 @@ async function main() {
   const apiKey = process.env.DATA_GOV_API_KEY;
   if (!apiKey) throw new Error('DATA_GOV_API_KEY is not set');
 
-  const period = resolvePeriod(args.period);
+  const { date, year, month } = resolvePeriod(args.period);
 
-  console.log(`Fetching TRAI MySpeed (${LSA}) resource ${args.resourceId} for ${period}…`);
-  const rawRows = await fetchAllKeralaRows(args.resourceId, apiKey);
+  console.log(`Fetching TRAI MySpeed (${LSA}) resource ${args.resourceId} for ${date} (${year}-${month})…`);
+  const rawRows = await fetchAllKeralaRows(args.resourceId, apiKey, year, month);
   console.log(`  fetched ${rawRows.length} raw Kerala samples`);
 
-  const benchmarks = aggregateTraiRows(rawRows, period);
+  const benchmarks = aggregateTraiRows(rawRows, date);
   if (benchmarks.length === 0) {
     throw new Error('No usable benchmark rows after aggregation — aborting (check resource-id/schema)');
   }
@@ -233,7 +269,7 @@ async function main() {
   }
 
   await upsertBenchmarks(supabaseUrl, serviceKey, benchmarks);
-  console.log(`Upserted ${benchmarks.length} rows into trai_benchmarks for ${period}.`);
+  console.log(`Upserted ${benchmarks.length} rows into trai_benchmarks for ${date}.`);
 }
 
 // Only run main() when invoked directly (allows importing aggregateTraiRows in tests).

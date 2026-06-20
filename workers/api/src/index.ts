@@ -648,6 +648,29 @@ async function handleTrai(env: Env): Promise<Response> {
   });
 }
 
+/** GET /v1/mlab — independent M-Lab benchmark rows (district + taluk).
+ *  Third-party CC0 reference data; kept separate from /v1/aggregate. */
+async function handleMlab(env: Env): Promise<Response> {
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse([], 503);
+
+  const params = new URLSearchParams({
+    select:
+      'geo_level,district,taluk,mlab_locality,match_type,period,download_mbps,upload_mbps,latency_ms,sample_count,source',
+    order: 'district.asc',
+    limit: '500',
+  });
+
+  const res = await supabase(`mlab_benchmarks?${params}`);
+  if (!res.ok) {
+    console.error('Supabase mlab error', res.status);
+    return jsonResponse({ error: 'Failed to fetch M-Lab data' }, 502);
+  }
+
+  const rows = await res.json();
+  return jsonResponse(Array.isArray(rows) ? rows : []);
+}
+
 // ---------------------------------------------------------------------------
 // Main fetch handler
 // ---------------------------------------------------------------------------
@@ -692,6 +715,11 @@ export default {
     // GET /v1/trai
     if (method === 'GET' && path === '/v1/trai') {
       return handleTrai(env);
+    }
+
+    // GET /v1/mlab
+    if (method === 'GET' && path === '/v1/mlab') {
+      return handleMlab(env);
     }
 
     return jsonResponse({ error: 'Not found' }, 404);
