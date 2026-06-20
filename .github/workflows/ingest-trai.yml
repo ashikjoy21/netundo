@@ -1,0 +1,50 @@
+name: Ingest TRAI MySpeed benchmark
+
+# Loads the official TRAI MySpeed mobile-speed baseline for Kerala into the
+# trai_benchmarks table. TRAI publishes monthly, a month or two behind, so we
+# run on the 5th and target the previous calendar month by default.
+#
+# Required repo settings:
+#   Secrets:   SUPABASE_URL, SUPABASE_SERVICE_KEY, DATA_GOV_API_KEY
+#   Variables: TRAI_RESOURCE_ID  (the data.gov.in resource UUID; update when
+#              TRAI rotates the monthly resource id)
+
+on:
+  schedule:
+    - cron: '0 2 5 * *' # 02:00 UTC on the 5th of each month
+  workflow_dispatch:
+    inputs:
+      period:
+        description: 'Dataset month YYYY-MM (blank = previous month)'
+        required: false
+        type: string
+      resource_id:
+        description: 'Override data.gov.in resource UUID (blank = TRAI_RESOURCE_ID var)'
+        required: false
+        type: string
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run TRAI ingest
+        env:
+          DATA_GOV_API_KEY: ${{ secrets.DATA_GOV_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          RESOURCE_ID: ${{ inputs.resource_id || vars.TRAI_RESOURCE_ID }}
+          PERIOD: ${{ inputs.period }}
+        run: |
+          if [ -z "$RESOURCE_ID" ]; then
+            echo "::error::No resource id. Set the TRAI_RESOURCE_ID repo variable or pass resource_id."
+            exit 1
+          fi
+          ARGS="--resource-id $RESOURCE_ID"
+          if [ -n "$PERIOD" ]; then ARGS="$ARGS --period $PERIOD"; fi
+          node scripts/ingest-trai.mjs $ARGS
