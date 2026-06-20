@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { allDistrictParams, findDistrict } from '@/lib/slug';
-import { getDistrictData } from '@/lib/localityData';
+import { getDistrictData, getTraiBenchmark } from '@/lib/localityData';
 import { absoluteUrl } from '@/lib/site';
 import { Breadcrumbs, type Crumb } from '@/components/locality/Breadcrumbs';
+import { TraiBenchmark } from '@/components/locality/TraiBenchmark';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
 
 interface PageProps {
@@ -37,6 +38,8 @@ export default async function DistrictPage({ params }: PageProps) {
 
   const data = await getDistrictData(district);
   if (!data) notFound();
+
+  const trai = await getTraiBenchmark();
 
   const crumbs: Crumb[] = [
     { label: 'Kerala', href: '/kerala' },
@@ -76,6 +79,8 @@ export default async function DistrictPage({ params }: PageProps) {
           </a>
         ))}
       </div>
+
+      {trai && <TraiBenchmark data={trai} />}
 
       <a href="/kerala" className="inline-block text-sm font-medium text-cf-orange hover:underline">
         ← All Kerala districts

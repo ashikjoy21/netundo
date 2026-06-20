@@ -68,6 +68,107 @@ export async function getAllTalukAggregates(): Promise<TalukAggRow[]> {
   return cachedRows;
 }
 
+// ---------------------------------------------------------------------------
+// TRAI MySpeed official benchmark (third-party reference, mobile-only, Kerala-wide)
+// ---------------------------------------------------------------------------
+
+interface TraiApiRow {
+  period: string;
+  operator: string;
+  technology: string;
+  direction: string;
+  avg_mbps: number;
+}
+
+interface TraiApiResponse {
+  period: string | null;
+  source: string | null;
+  operators: TraiApiRow[];
+}
+
+export interface TraiOperator {
+  operator: string;
+  technology: string;
+  downloadMbps: number | null;
+  uploadMbps: number | null;
+}
+
+export interface TraiBenchmark {
+  /** Dataset month, formatted for display (e.g. "May 2026"). */
+  periodLabel: string;
+  source: string;
+  operators: TraiOperator[];
+  /** Mean download across operators — the headline Kerala mobile baseline. */
+  avgDownloadMbps: number | null;
+}
+
+let cachedTrai: Promise<TraiBenchmark | null> | null = null;
+
+/** Memoized, build-time fetch of the latest TRAI Kerala mobile baseline. */
+export async function getTraiBenchmark(): Promise<TraiBenchmark | null> {
+  if (cachedTrai) return cachedTrai;
+
+  const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
+  if (!apiBase) {
+    cachedTrai = Promise.resolve(null);
+    return cachedTrai;
+  }
+
+  cachedTrai = fetch(`${apiBase}/v1/trai`)
+    .then((r) => (r.ok ? (r.json() as Promise<TraiApiResponse>) : null))
+    .then((res) => (res && res.period ? shapeTrai(res) : null))
+    .catch(() => null);
+
+  return cachedTrai;
+}
+
+function shapeTrai(res: TraiApiResponse): TraiBenchmark | null {
+  // Group rows by operator, keeping the most-sampled download/upload per operator.
+  // We prefer the fastest available technology row (4G/5G) by taking the max avg.
+  const byOperator = new Map<string, TraiOperator>();
+  for (const row of res.operators) {
+    const entry = byOperator.get(row.operator) ?? {
+      operator: row.operator,
+      technology: row.technology,
+      downloadMbps: null,
+      uploadMbps: null,
+    };
+    if (row.direction === 'download') {
+      if (entry.downloadMbps == null || row.avg_mbps > entry.downloadMbps) {
+        entry.downloadMbps = row.avg_mbps;
+        entry.technology = row.technology;
+      }
+    } else if (row.direction === 'upload') {
+      if (entry.uploadMbps == null || row.avg_mbps > entry.uploadMbps) {
+        entry.uploadMbps = row.avg_mbps;
+      }
+    }
+    byOperator.set(row.operator, entry);
+  }
+
+  const operators = [...byOperator.values()]
+    .filter((o) => o.downloadMbps != null)
+    .sort((a, b) => (b.downloadMbps ?? 0) - (a.downloadMbps ?? 0));
+
+  if (operators.length === 0) return null;
+
+  const dls = operators.map((o) => o.downloadMbps as number);
+  const avgDownloadMbps = dls.reduce((s, v) => s + v, 0) / dls.length;
+
+  // res.period is YYYY-MM-01; render as "Month YYYY".
+  const d = new Date(res.period as string);
+  const periodLabel = Number.isNaN(d.getTime())
+    ? (res.period as string)
+    : d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+  return {
+    periodLabel,
+    source: res.source ?? 'TRAI MySpeed (data.gov.in)',
+    operators,
+    avgDownloadMbps,
+  };
+}
+
 function summarize(rows: AggregateRow[]): MetricSummary {
   const samples = rows.reduce((sum, r) => sum + r.sample_count, 0);
   const weighted = (field: keyof AggregateRow): number | null => {

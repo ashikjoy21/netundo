@@ -8,12 +8,14 @@ import {
 } from '@/lib/slug';
 import {
   getTalukData,
+  getTraiBenchmark,
   localizedFaq,
   localizedIntro,
 } from '@/lib/localityData';
 import { absoluteUrl } from '@/lib/site';
 import { Breadcrumbs, type Crumb } from '@/components/locality/Breadcrumbs';
 import { SummaryCards } from '@/components/locality/SummaryCards';
+import { TraiBenchmark } from '@/components/locality/TraiBenchmark';
 import { IspTable } from '@/components/locality/IspTable';
 import { Faq } from '@/components/locality/Faq';
 import { VillageList, NearbyTaluks } from '@/components/locality/LinkList';
@@ -57,6 +59,8 @@ export default async function TalukPage({ params }: PageProps) {
   const data = await getTalukData(district, taluk);
   if (!data) notFound();
 
+  const trai = await getTraiBenchmark();
+
   const crumbs: Crumb[] = [
     { label: 'Kerala', href: '/kerala' },
     { label: place.district, href: `/kerala/${district}` },
@@ -82,6 +86,8 @@ export default async function TalukPage({ params }: PageProps) {
         <h2 className="text-base font-semibold text-gray-900">Best internet providers in {place.taluk}</h2>
         <IspTable isps={data.topIsps} placeName={place.taluk} />
       </section>
+
+      {trai && <TraiBenchmark data={trai} />}
 
       <section className="space-y-3">
         <h2 className="text-base font-semibold text-gray-900">Frequently asked questions</h2>

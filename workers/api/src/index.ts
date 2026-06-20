@@ -431,6 +431,16 @@ interface TestResultRow {
   created_at: string;
 }
 
+interface TraiRow {
+  period: string;
+  operator: string;
+  technology: string;
+  direction: string;
+  avg_mbps: number;
+  sample_count: number | null;
+  source: string;
+}
+
 /** Most frequently occurring non-null isp_name in a bucket (mode), for display. */
 function representativeIspName(rows: TestResultRow[]): string | null {
   const counts = new Map<string, number>();
@@ -601,6 +611,43 @@ async function handlePoints(url: URL, env: Env): Promise<Response> {
   return jsonResponse(Array.isArray(rows) ? rows : []);
 }
 
+/** GET /v1/trai — official TRAI MySpeed Kerala mobile baseline (latest month).
+ *  Third-party reference data; kept entirely separate from /v1/aggregate. */
+async function handleTrai(env: Env): Promise<Response> {
+  const supabase = makeSupabase(env);
+  if (!supabase) {
+    return jsonResponse({ period: null, source: null, operators: [] }, 503);
+  }
+
+  const params = new URLSearchParams({
+    select: 'period,operator,technology,direction,avg_mbps,sample_count,source',
+    lsa: 'eq.Kerala',
+    order: 'period.desc',
+    limit: '300',
+  });
+
+  const res = await supabase(`trai_benchmarks?${params}`);
+  if (!res.ok) {
+    console.error('Supabase trai error', res.status);
+    return jsonResponse({ error: 'Failed to fetch TRAI benchmark' }, 502);
+  }
+
+  const rows = (await res.json()) as TraiRow[];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return jsonResponse({ period: null, source: null, operators: [] });
+  }
+
+  // Rows are period-desc, so the first row's period is the most recent month.
+  const latest = rows[0].period;
+  const current = rows.filter((r) => r.period === latest);
+
+  return jsonResponse({
+    period: latest,
+    source: current[0]?.source ?? 'TRAI MySpeed (data.gov.in, NDSAP)',
+    operators: current,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Main fetch handler
 // ---------------------------------------------------------------------------
@@ -640,6 +687,11 @@ export default {
     // GET /v1/points
     if (method === 'GET' && path === '/v1/points') {
       return handlePoints(url, env);
+    }
+
+    // GET /v1/trai
+    if (method === 'GET' && path === '/v1/trai') {
+      return handleTrai(env);
     }
 
     return jsonResponse({ error: 'Not found' }, 404);
