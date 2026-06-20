@@ -62,7 +62,9 @@ function handleDownload(url: URL): Response {
       let remaining = bytes;
       while (remaining > 0) {
         const size = Math.min(CHUNK, remaining);
-        controller.enqueue(new Uint8Array(size)); // zero-filled
+        const chunk = new Uint8Array(size);
+        crypto.getRandomValues(chunk); // random bytes — not compressible
+        controller.enqueue(chunk);
         remaining -= size;
       }
       controller.close();
