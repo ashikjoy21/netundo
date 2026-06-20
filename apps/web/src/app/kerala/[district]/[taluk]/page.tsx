@@ -10,7 +10,6 @@ import {
   getTalukData,
   getTraiBenchmark,
   getMlabForTaluk,
-  getOoklaForTaluk,
   localizedFaq,
   localizedIntro,
 } from '@/lib/localityData';
@@ -19,7 +18,6 @@ import { Breadcrumbs, type Crumb } from '@/components/locality/Breadcrumbs';
 import { SummaryCards } from '@/components/locality/SummaryCards';
 import { TraiBenchmark } from '@/components/locality/TraiBenchmark';
 import { MlabBenchmark } from '@/components/locality/MlabBenchmark';
-import { OoklaBenchmark } from '@/components/locality/OoklaBenchmark';
 import { IspTable } from '@/components/locality/IspTable';
 import { Faq } from '@/components/locality/Faq';
 import { VillageList, NearbyTaluks } from '@/components/locality/LinkList';
@@ -65,7 +63,6 @@ export default async function TalukPage({ params }: PageProps) {
 
   const trai = await getTraiBenchmark();
   const mlab = await getMlabForTaluk(place.district, place.taluk);
-  const ookla = await getOoklaForTaluk(place.district, place.taluk);
 
   const crumbs: Crumb[] = [
     { label: 'Kerala', href: '/kerala' },
@@ -92,8 +89,6 @@ export default async function TalukPage({ params }: PageProps) {
         <h2 className="text-base font-semibold text-gray-900">Best internet providers in {place.taluk}</h2>
         <IspTable isps={data.topIsps} placeName={place.taluk} />
       </section>
-
-      {ookla && <OoklaBenchmark data={ookla} placeName={place.taluk} />}
 
       {mlab && <MlabBenchmark data={mlab} placeName={place.taluk} geoLevel="taluk" />}
 

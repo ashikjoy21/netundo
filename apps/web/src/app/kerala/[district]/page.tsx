@@ -1,12 +1,11 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { allDistrictParams, findDistrict } from '@/lib/slug';
-import { getDistrictData, getTraiBenchmark, getMlabForDistrict, getOoklaForDistrict } from '@/lib/localityData';
+import { getDistrictData, getTraiBenchmark, getMlabForDistrict } from '@/lib/localityData';
 import { absoluteUrl } from '@/lib/site';
 import { Breadcrumbs, type Crumb } from '@/components/locality/Breadcrumbs';
 import { TraiBenchmark } from '@/components/locality/TraiBenchmark';
 import { MlabBenchmark } from '@/components/locality/MlabBenchmark';
-import { OoklaBenchmark } from '@/components/locality/OoklaBenchmark';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
 
 interface PageProps {
@@ -43,7 +42,6 @@ export default async function DistrictPage({ params }: PageProps) {
 
   const trai = await getTraiBenchmark();
   const mlab = await getMlabForDistrict(place.district);
-  const ookla = await getOoklaForDistrict(place.district);
 
   const crumbs: Crumb[] = [
     { label: 'Kerala', href: '/kerala' },
@@ -83,8 +81,6 @@ export default async function DistrictPage({ params }: PageProps) {
           </a>
         ))}
       </div>
-
-      {ookla && <OoklaBenchmark data={ookla} placeName={place.district} />}
 
       {mlab && <MlabBenchmark data={mlab} placeName={place.district} geoLevel="district" />}
 
