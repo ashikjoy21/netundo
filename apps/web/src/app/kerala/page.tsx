@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { SpeedMap } from '@/components/landing/SpeedMap';
+import { slugify } from '@/lib/slug';
 
 const DISTRICTS = [
   'Thiruvananthapuram', 'Kollam', 'Pathanamthitta', 'Alappuzha', 'Kottayam',
@@ -190,7 +191,10 @@ function DistrictCard({
     : 'text-red-500';
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-sm transition-shadow cursor-pointer">
+    <a
+      href={`/kerala/${slugify(district)}`}
+      className="block bg-white border border-gray-200 rounded-xl p-4 hover:shadow-sm hover:border-cf-orange/40 transition-all"
+    >
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide truncate">{district}</p>
       <p className={`text-2xl font-bold mt-1 ${speedColor}`}>
         {downloadMbps != null ? `${downloadMbps.toFixed(0)}` : '—'}
@@ -200,7 +204,7 @@ function DistrictCard({
         {latencyMs != null ? `${latencyMs.toFixed(0)}ms latency · ` : ''}
         {samples > 0 ? `${samples} tests` : 'No data yet'}
       </p>
-    </div>
+    </a>
   );
 }
 

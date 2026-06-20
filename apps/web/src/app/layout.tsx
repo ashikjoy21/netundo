@@ -1,7 +1,11 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { Database, Gauge, MapPin, Radio, Rocket, ShieldCheck, Wifi } from 'lucide-react';
+import { KERALA_VILLAGES } from '@/lib/keralaPlaces';
+import { slugify } from '@/lib/slug';
 import './globals.css';
+
+const KERALA_DISTRICT_NAMES = Object.keys(KERALA_VILLAGES);
 
 const inter = Inter({
   subsets: ['latin'],
@@ -148,6 +152,22 @@ function Footer() {
             <a href="/about" className="text-neutral-300 transition-colors hover:text-white">About</a>
             <a href="/methodology" className="text-neutral-300 transition-colors hover:text-white">Methodology</a>
             <a href="/privacy" className="text-neutral-300 transition-colors hover:text-white">Privacy</a>
+          </nav>
+        </div>
+        <div className="mx-auto mt-8 max-w-[1260px] border-t border-white/10 pt-6">
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            Internet speed by district
+          </p>
+          <nav className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4 lg:grid-cols-7">
+            {KERALA_DISTRICT_NAMES.map((district) => (
+              <a
+                key={district}
+                href={`/kerala/${slugify(district)}`}
+                className="text-neutral-300 transition-colors hover:text-cf-orange"
+              >
+                {district}
+              </a>
+            ))}
           </nav>
         </div>
         <div className="mx-auto mt-7 flex max-w-[1260px] flex-col gap-2 border-t border-white/10 pt-5 text-xs text-neutral-500 sm:flex-row sm:items-center sm:justify-between">

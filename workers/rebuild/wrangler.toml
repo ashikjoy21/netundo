@@ -1,0 +1,10 @@
+name = "netundo-rebuild"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Nightly at 20:00 UTC (01:30 IST). Adjust as needed.
+[triggers]
+crons = ["0 20 * * *"]
+
+# Set the Pages deploy hook URL as a secret, not a var:
+#   cd workers/rebuild && wrangler secret put DEPLOY_HOOK_URL

@@ -415,6 +415,7 @@ function percentile(sorted: number[], p: number): number | null {
 
 interface TestResultRow {
   district: string;
+  taluk: string | null;
   isp_name: string | null;
   asn: number | null;
   connection_type: string;
@@ -442,11 +443,9 @@ function representativeIspName(rows: TestResultRow[]): string | null {
   return best;
 }
 
-/** Aggregate raw test_results in the worker (materialized view may be stale). */
-function aggregateTestResults(
-  rows: TestResultRow[],
-): Array<{
+interface AggregateOutRow {
   district: string;
+  taluk?: string | null;
   asn: number | null;
   isp_name: string | null;
   connection_type: string;
@@ -457,13 +456,25 @@ function aggregateTestResults(
   p90_upload_mbps: number | null;
   p50_latency_ms: number | null;
   p50_jitter_ms: number | null;
-}> {
+}
+
+/** Aggregate raw test_results in the worker (materialized view may be stale).
+ *
+ * When `byTaluk` is true, results are also bucketed by `taluk` and each output
+ * row carries a `taluk` field. Rows with a null taluk are grouped under the
+ * empty bucket and surface as `taluk: null` so callers can still use them as
+ * district-level context. */
+function aggregateTestResults(
+  rows: TestResultRow[],
+  byTaluk = false,
+): AggregateOutRow[] {
   const groups = new Map<string, TestResultRow[]>();
 
   for (const row of rows) {
     // Group by ASN (the stable network identifier), not the display name which
-    // can drift over time.
-    const key = `${row.district}|${row.asn ?? ''}|${row.connection_type}`;
+    // can drift over time. Add taluk to the key when requested.
+    const talukPart = byTaluk ? `|${row.taluk ?? ''}` : '';
+    const key = `${row.district}${talukPart}|${row.asn ?? ''}|${row.connection_type}`;
     const bucket = groups.get(key);
     if (bucket) bucket.push(row);
     else groups.set(key, [row]);
@@ -479,6 +490,7 @@ function aggregateTestResults(
     const first = bucket[0];
     return {
       district: first.district,
+      ...(byTaluk ? { taluk: first.taluk ?? null } : {}),
       asn: first.asn,
       isp_name: representativeIspName(bucket),
       connection_type: first.connection_type,
@@ -504,23 +516,33 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
   }
 
   const district = url.searchParams.get('district');
+  const taluk = url.searchParams.get('taluk');
   const isp = url.searchParams.get('isp');
   const asn = url.searchParams.get('asn');
   const connectionType = url.searchParams.get('connection_type');
   const period = url.searchParams.get('period'); // 'weekly' | 'monthly'
-
-  const days = period === 'monthly' ? 28 : 7;
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  // group=taluk powers the statically-generated locality pages: it buckets by
+  // taluk and uses an all-time window with a higher row cap so a single build
+  // request can snapshot the whole state.
+  const byTaluk = url.searchParams.get('group') === 'taluk';
 
   const params = new URLSearchParams({
-    select: 'district,isp_name,asn,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at',
+    select: byTaluk
+      ? 'district,taluk,isp_name,asn,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at'
+      : 'district,isp_name,asn,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at',
     is_outlier: 'eq.false',
-    created_at: `gte.${cutoff}`,
     order: 'created_at.desc',
-    limit: '2000',
+    limit: byTaluk ? '50000' : '2000',
   });
 
+  if (!byTaluk) {
+    const days = period === 'monthly' ? 28 : 7;
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    params.set('created_at', `gte.${cutoff}`);
+  }
+
   if (district) params.set('district', `eq.${district}`);
+  if (taluk) params.set('taluk', `eq.${taluk}`);
   // Prefer the stable ASN filter; `isp` (name) kept for backward compatibility.
   if (asn) params.set('asn', `eq.${asn}`);
   else if (isp) params.set('isp_name', `eq.${isp}`);
@@ -538,7 +560,7 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
     return jsonResponse({ error: 'Invalid aggregate response' }, 502);
   }
 
-  return jsonResponse(aggregateTestResults(rows));
+  return jsonResponse(aggregateTestResults(rows, byTaluk));
 }
 
 /** GET /v1/points — public, located results for the live map. */
