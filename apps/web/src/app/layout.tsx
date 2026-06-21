@@ -151,6 +151,7 @@ function Footer() {
             <a href="/charts" className="text-neutral-300 transition-colors hover:text-white">Top Charts</a>
             <a href="/about" className="text-neutral-300 transition-colors hover:text-white">About</a>
             <a href="/methodology" className="text-neutral-300 transition-colors hover:text-white">Methodology</a>
+            <a href="/feedback" className="text-neutral-300 transition-colors hover:text-white">Feedback</a>
             <a href="/privacy" className="text-neutral-300 transition-colors hover:text-white">Privacy</a>
           </nav>
         </div>

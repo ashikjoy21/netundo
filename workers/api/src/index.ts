@@ -808,6 +808,11 @@ export default {
       return handlePostResult(request, env);
     }
 
+    // POST /v1/feedback
+    if (method === 'POST' && path === '/v1/feedback') {
+      return handlePostFeedback(request, env);
+    }
+
     // GET /v1/results/:id
     const resultMatch = path.match(/^\/v1\/results\/([^/]+)$/);
     if (method === 'GET' && resultMatch) {
