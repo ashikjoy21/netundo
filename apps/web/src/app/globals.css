@@ -57,6 +57,22 @@ body {
   animation: footer-marquee 24s linear infinite;
 }
 
+.footer-pulse {
+  animation: footer-pulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes footer-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
 @keyframes footer-glow-breathe {
   0% {
     filter: saturate(1) brightness(1);
@@ -141,7 +157,8 @@ body {
   .footer-orb,
   .footer-floating-tile,
   .footer-copy-reveal,
-  .footer-marquee {
+  .footer-marquee,
+  .footer-pulse {
     animation: none;
   }
 }

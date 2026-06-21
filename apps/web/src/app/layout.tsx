@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import { Database, Gauge, MapPin, Radio, Rocket, ShieldCheck, Wifi } from 'lucide-react';
+import { ArrowUpRight, Database, Gauge, MapPin, Radio, Rocket, ShieldCheck, Wifi } from 'lucide-react';
 import { KERALA_VILLAGES } from '@/lib/keralaPlaces';
 import { slugify } from '@/lib/slug';
 import './globals.css';
@@ -65,6 +65,32 @@ function Footer() {
     { icon: <Rocket className="h-4 w-4" />, text: 'Cloudflare measurement engine' },
     { icon: <Database className="h-4 w-4" />, text: 'Open source, MIT licensed' },
     { icon: <Wifi className="h-4 w-4" />, text: 'Mobile and broadband results' },
+  ];
+
+  const linkGroups = [
+    {
+      title: 'Measure',
+      links: [
+        { label: 'Speed Test', href: '/test' },
+        { label: 'Kerala Map', href: '/kerala' },
+        { label: 'Top Charts', href: '/charts' },
+      ],
+    },
+    {
+      title: 'Project',
+      links: [
+        { label: 'About', href: '/about' },
+        { label: 'Methodology', href: '/methodology' },
+        { label: 'Privacy', href: '/privacy' },
+      ],
+    },
+    {
+      title: 'Community',
+      links: [
+        { label: 'Feedback', href: '/feedback' },
+        { label: 'Home', href: '/' },
+      ],
+    },
   ];
 
   return (
@@ -134,46 +160,95 @@ function Footer() {
           </div>
         </div>
       </div>
-      <div className="-mx-1 mt-6 border-t border-neutral-800 bg-[#10100f] px-5 py-9 text-white sm:-mx-2 sm:mt-8 sm:px-6 sm:py-10">
-        <div className="mx-auto flex max-w-[1260px] flex-col gap-7 md:flex-row md:items-center md:justify-between">
-          <div>
-            <a href="/" aria-label="netundo home" className="inline-flex items-center">
-              <Wordmark inverse size="sm" />
-            </a>
-            <p className="mt-3 max-w-md text-xs leading-6 text-neutral-400">
-              Crowdsourced Kerala network quality data, powered by Cloudflare&apos;s measurement engine.
-            </p>
-          </div>
-          <nav className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-            <a href="/" className="text-neutral-300 transition-colors hover:text-white">Home</a>
-            <a href="/test" className="text-neutral-300 transition-colors hover:text-white">Speed Test</a>
-            <a href="/kerala" className="text-neutral-300 transition-colors hover:text-white">Kerala Map</a>
-            <a href="/charts" className="text-neutral-300 transition-colors hover:text-white">Top Charts</a>
-            <a href="/about" className="text-neutral-300 transition-colors hover:text-white">About</a>
-            <a href="/methodology" className="text-neutral-300 transition-colors hover:text-white">Methodology</a>
-            <a href="/feedback" className="text-neutral-300 transition-colors hover:text-white">Feedback</a>
-            <a href="/privacy" className="text-neutral-300 transition-colors hover:text-white">Privacy</a>
-          </nav>
-        </div>
-        <div className="mx-auto mt-8 max-w-[1260px] border-t border-white/10 pt-6">
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            Internet speed by district
-          </p>
-          <nav className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4 lg:grid-cols-7">
-            {KERALA_DISTRICT_NAMES.map((district) => (
-              <a
-                key={district}
-                href={`/kerala/${slugify(district)}`}
-                className="text-neutral-300 transition-colors hover:text-cf-orange"
-              >
-                {district}
+      <div className="relative -mx-1 mt-6 overflow-hidden bg-[#0b0b0a] text-white sm:-mx-2 sm:mt-8">
+        <div aria-hidden className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cf-orange to-transparent opacity-70" />
+        <div
+          aria-hidden
+          className="absolute inset-0 opacity-[0.045]"
+          style={{
+            backgroundImage: 'radial-gradient(circle at 1px 1px, #ffffff 1px, transparent 1.4px)',
+            backgroundSize: '22px 22px',
+          }}
+        />
+        <div aria-hidden className="absolute -right-32 -top-40 h-80 w-80 rounded-full bg-cf-orange/10 blur-3xl" />
+
+        <div className="relative mx-auto max-w-[1260px] px-5 py-12 sm:px-6 sm:py-14">
+          <div className="grid gap-10 lg:grid-cols-12 lg:gap-8">
+            <div className="lg:col-span-5">
+              <a href="/" aria-label="netundo home" className="inline-flex items-center">
+                <Wordmark inverse />
               </a>
-            ))}
-          </nav>
-        </div>
-        <div className="mx-auto mt-7 flex max-w-[1260px] flex-col gap-2 border-t border-white/10 pt-5 text-xs text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
-          <span>Open source · MIT · Community data, not an ISP certification.</span>
-          <span>© {new Date().getFullYear()} netundo</span>
+              <p className="mt-4 max-w-sm text-sm leading-6 text-neutral-400">
+                Crowdsourced internet quality for Kerala — measured with Cloudflare&apos;s engine and mapped across every district, taluk, and village.
+              </p>
+              <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-neutral-300">
+                <span className="relative flex h-2 w-2">
+                  <span className="footer-pulse absolute inline-flex h-full w-full rounded-full bg-emerald-400/70" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                </span>
+                Live data · refreshed nightly
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:col-span-7">
+              {linkGroups.map((group) => (
+                <div key={group.title}>
+                  <h3 className="font-mono text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-neutral-500">
+                    {group.title}
+                  </h3>
+                  <ul className="mt-4 space-y-2.5">
+                    {group.links.map((link) => (
+                      <li key={link.href}>
+                        <a
+                          href={link.href}
+                          className="group inline-flex text-sm text-neutral-300 transition-colors hover:text-white"
+                        >
+                          <span className="relative">
+                            {link.label}
+                            <span aria-hidden className="absolute -bottom-0.5 left-0 h-px w-0 bg-cf-orange transition-all duration-300 group-hover:w-full" />
+                          </span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-12 border-t border-white/10 pt-8">
+            <div className="flex items-center justify-between">
+              <h3 className="font-mono text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-neutral-500">
+                Internet speed by district
+              </h3>
+              <a
+                href="/kerala"
+                className="inline-flex items-center gap-1 text-xs font-medium text-neutral-400 transition-colors hover:text-cf-orange"
+              >
+                All 14 <ArrowUpRight className="h-3.5 w-3.5" />
+              </a>
+            </div>
+            <nav className="mt-5 grid grid-cols-2 gap-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
+              {KERALA_DISTRICT_NAMES.map((district) => (
+                <a
+                  key={district}
+                  href={`/kerala/${slugify(district)}`}
+                  className="group relative flex items-center rounded-md px-3 py-2 text-sm text-neutral-300 transition-colors hover:bg-white/[0.05] hover:text-white"
+                >
+                  <span
+                    aria-hidden
+                    className="absolute left-0 top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded-full bg-cf-orange opacity-0 transition-opacity group-hover:opacity-100"
+                  />
+                  {district}
+                </a>
+              ))}
+            </nav>
+          </div>
+
+          <div className="mt-10 flex flex-col gap-2 border-t border-white/10 pt-6 text-xs text-neutral-500 sm:flex-row sm:items-center sm:justify-between">
+            <span>Open source · MIT · Community data, not an ISP certification.</span>
+            <span>© {new Date().getFullYear()} netundo · Built in Kerala</span>
+          </div>
         </div>
       </div>
     </footer>
