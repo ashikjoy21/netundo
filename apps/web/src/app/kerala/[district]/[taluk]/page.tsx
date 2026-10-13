@@ -24,6 +24,7 @@ import { IspTable } from '@/components/locality/IspTable';
 import { Faq } from '@/components/locality/Faq';
 import { VillageList, NearbyTaluks } from '@/components/locality/LinkList';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
+import { ReportButton } from '@/components/outage/ReportButton';
 import { FallbackNotice } from '@/components/locality/FallbackNotice';
 
 interface PageProps {
@@ -90,6 +91,7 @@ export default async function TalukPage({ params }: PageProps) {
           Internet speed in {place.taluk}, {place.district}
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">{localizedIntro(prose)}</p>
+        <ReportButton area={{ district: place.district, taluk: place.taluk }} className="mt-4 w-full sm:w-auto" />
       </header>
 
       {shown ? (

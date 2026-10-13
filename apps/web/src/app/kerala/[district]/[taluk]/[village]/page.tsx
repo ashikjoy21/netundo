@@ -19,6 +19,7 @@ import { IspTable } from '@/components/locality/IspTable';
 import { Faq } from '@/components/locality/Faq';
 import { VillageList } from '@/components/locality/LinkList';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
+import { ReportButton } from '@/components/outage/ReportButton';
 import { FallbackNotice } from '@/components/locality/FallbackNotice';
 
 interface PageProps {
@@ -93,6 +94,10 @@ export default async function VillagePage({ params }: PageProps) {
           Internet in {data.village}, {data.taluk}
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">{localizedIntro(prose)}</p>
+        <ReportButton
+          area={{ district: data.district, taluk: data.taluk, village: data.village }}
+          className="mt-4 w-full sm:w-auto"
+        />
       </header>
 
       {fallback ? (

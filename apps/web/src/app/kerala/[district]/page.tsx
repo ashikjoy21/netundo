@@ -10,6 +10,7 @@ import { IspTable } from '@/components/locality/IspTable';
 import { SummaryCards } from '@/components/locality/SummaryCards';
 import { FallbackNotice } from '@/components/locality/FallbackNotice';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
+import { ReportButton } from '@/components/outage/ReportButton';
 
 interface PageProps {
   params: Promise<{ district: string }>;
@@ -64,6 +65,7 @@ export default async function DistrictPage({ params }: PageProps) {
           Broadband and mobile-data performance across {data.taluks.length} areas in {place.district}, measured by{' '}
           {data.totalSamples} crowdsourced netundo speed tests. Pick an area to see local providers and speeds.
         </p>
+        <ReportButton area={{ district: place.district }} className="mt-4 w-full sm:w-auto" />
       </header>
 
       {data.totalSamples === 0 && (

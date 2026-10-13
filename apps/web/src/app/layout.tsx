@@ -4,6 +4,7 @@ import { ArrowUpRight, Database, Gauge, MapPin, Radio, Rocket, ShieldCheck, Wifi
 import { KERALA_VILLAGES } from '@/lib/keralaPlaces';
 import { slugify } from '@/lib/slug';
 import './globals.css';
+import { ReportButton } from '@/components/outage/ReportButton';
 
 const KERALA_DISTRICT_NAMES = Object.keys(KERALA_VILLAGES);
 
@@ -43,13 +44,19 @@ function Header() {
           <a href="/" aria-label="netundo home" className="flex min-w-0 items-center">
             <Wordmark />
           </a>
-          <a href="/test" className="shrink-0 rounded-full bg-cf-orange px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cf-orange-dark sm:hidden">
-            Test Speed
-          </a>
+          <div className="flex shrink-0 items-center gap-2 sm:hidden">
+            <ReportButton size="sm" />
+            <a href="/test" className="rounded-full bg-cf-orange px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cf-orange-dark">
+              Test Speed
+            </a>
+          </div>
         </div>
         <nav className="flex items-center gap-2 overflow-x-auto pb-0.5 text-sm sm:gap-4 sm:overflow-visible sm:pb-0">
           <a href="/kerala" className="whitespace-nowrap rounded-full bg-gray-50 px-3 py-1.5 font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 sm:bg-transparent sm:px-0 sm:py-0">Kerala Map</a>
           <a href="/charts" className="whitespace-nowrap rounded-full bg-gray-50 px-3 py-1.5 font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 sm:bg-transparent sm:px-0 sm:py-0">Top Charts</a>
+          <span className="hidden sm:inline-flex">
+            <ReportButton size="sm" />
+          </span>
           <a href="/test" className="hidden rounded-full bg-cf-orange px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-cf-orange-dark sm:inline-flex">
             Test Speed
           </a>

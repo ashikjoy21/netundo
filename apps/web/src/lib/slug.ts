@@ -9,13 +9,8 @@ import { KERALA_VILLAGES } from './keralaPlaces';
  * so lookups always take the parent slug into account.
  */
 
-export function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+export { slugifyPlace as slugify } from '@netundo/types';
+import { slugifyPlace as slugify } from '@netundo/types';
 
 export interface DistrictParams {
   district: string;
