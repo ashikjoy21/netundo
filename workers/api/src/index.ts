@@ -8,6 +8,11 @@
  *   PATCH /v1/results/:id/provider
  *   GET  /v1/aggregate
  *   GET  /v1/locate
+ *   POST /v1/reports
+ *   GET  /v1/status
+ *   GET  /v1/outages/active
+ *
+ * Cron (every 5 min): closes outage events that have stopped getting reports.
  *   POST /v1/feedback
  *   GET  /v1/health
  */
@@ -15,6 +20,8 @@
 import { isKnownProviderSlug } from '@netundo/types';
 import { aggregateByBrand, percentile, type BrandTestRow, type PlaceGrouping } from './aggregate';
 import { locateTaluk } from './locate';
+import { buildStatus, isKnownDistrict, isKnownTaluk, validateReport, type EventRow, type ReportPayload, type ReportRow } from './outages';
+import { dailyIpHash, tokenHash } from './privacy';
 
 // ---------------------------------------------------------------------------
 // Environment bindings
@@ -23,6 +30,24 @@ import { locateTaluk } from './locate';
 interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
+  /** Secret key for IP / client-token HMACs (wrangler secret put IP_HASH_SALT). */
+  IP_HASH_SALT?: string;
+  OUTAGE_MIN_REPORTS?: string;
+  OUTAGE_WINDOW_MIN?: string;
+  RIGHT_NOW_WINDOW_MIN?: string;
+}
+
+/** Numeric [vars] with defaults, so a missing var never breaks a route. */
+function outageConfig(env: Env) {
+  const int = (v: string | undefined, fallback: number, min = 1) => {
+    const n = Number.parseInt(v ?? '', 10);
+    return Number.isFinite(n) && n >= min ? n : fallback;
+  };
+  return {
+    minReports: int(env.OUTAGE_MIN_REPORTS, 3),
+    windowMin: int(env.OUTAGE_WINDOW_MIN, 30),
+    rightNowMin: int(env.RIGHT_NOW_WINDOW_MIN, 60),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -774,6 +799,214 @@ function handleLocate(url: URL): Response {
   });
 }
 
+/** Active operator updates for an area. Filled in with the operator API. */
+async function fetchActiveOperatorUpdates(
+  _env: Env,
+  _area: { district: string; taluk: string | null },
+): Promise<unknown[]> {
+  return [];
+}
+
+/** POST /v1/reports — "Net illa?" outage report. No login; deduped and
+ *  rate-limited per client token (and loosely per IP) inside one SQL call. */
+async function handlePostReport(request: Request, env: Env): Promise<Response> {
+  let body: ReportPayload;
+  try {
+    body = (await request.json()) as ReportPayload;
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+  const result = validateReport(body);
+  if (!result.ok) return jsonResponse({ error: result.error, field: result.field }, 422);
+  const r = result.report;
+
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse({ error: 'Supabase not configured' }, 503);
+
+  const cfg = outageConfig(env);
+  const cf = request.cf as Record<string, unknown> | undefined;
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+
+  const res = await supabase('rpc/submit_outage_report', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_district: r.district,
+      p_taluk: r.taluk,
+      p_village: r.village,
+      p_brand_key: r.brandKey,
+      p_provider_name: r.providerName,
+      p_kind: r.kind,
+      p_status: r.status,
+      p_comment: r.comment,
+      p_asn: typeof cf?.asn === 'number' ? cf.asn : null,
+      p_ip_hash: await dailyIpHash(ip, env),
+      p_token_hash: await tokenHash(r.clientToken, env),
+      p_min_reports: cfg.minReports,
+      p_window_min: cfg.windowMin,
+    }),
+  });
+  if (!res.ok) {
+    console.error('submit_outage_report error', res.status, await res.text());
+    return jsonResponse({ error: 'Failed to save report' }, 502);
+  }
+  const out = (await res.json()) as {
+    error?: string;
+    report_id?: string;
+    deduped?: boolean;
+    reporters?: number;
+    likely_outage?: boolean;
+  };
+  if (out.error === 'rate_limited') {
+    return jsonResponse({ error: 'Too many reports from this device — try again later' }, 429);
+  }
+  return jsonResponse(
+    {
+      success: true,
+      id: out.report_id,
+      deduped: out.deduped ?? false,
+      reporters: out.reporters ?? 1,
+      likelyOutage: out.likely_outage ?? false,
+    },
+    out.deduped ? 200 : 201,
+  );
+}
+
+const REPORT_COLUMNS =
+  'district,taluk,village,brand_key,provider_name,kind,status,comment,last_seen_at,ip_hash,client_token_hash';
+const EVENT_COLUMNS =
+  'id,district,taluk,brand_key,provider_name,kind,started_at,last_report_at,report_count,peak_reporters,top_village';
+
+/** GET /v1/status?district=&taluk= — the "Right now" section. Reports from the
+ *  last RIGHT_NOW_WINDOW_MIN grouped by taluk + provider + kind, with live
+ *  "Likely outage" flags and active operator updates. */
+async function handleStatus(url: URL, env: Env): Promise<Response> {
+  const district = url.searchParams.get('district') ?? '';
+  const taluk = url.searchParams.get('taluk');
+  if (!isKnownDistrict(district)) return jsonResponse({ error: 'Unknown district', field: 'district' }, 422);
+  if (taluk && !isKnownTaluk(district, taluk)) return jsonResponse({ error: 'Unknown taluk', field: 'taluk' }, 422);
+
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse({ error: 'Supabase not configured' }, 503);
+
+  const cfg = outageConfig(env);
+  const now = new Date();
+  const since = new Date(now.getTime() - cfg.rightNowMin * 60_000).toISOString();
+
+  const reportParams = new URLSearchParams({
+    select: REPORT_COLUMNS,
+    district: `eq.${district}`,
+    hidden: 'eq.false',
+    last_seen_at: `gte.${since}`,
+    order: 'last_seen_at.desc',
+    limit: '2000',
+  });
+  const eventParams = new URLSearchParams({
+    select: EVENT_COLUMNS,
+    district: `eq.${district}`,
+    ended_at: 'is.null',
+  });
+  if (taluk) {
+    reportParams.set('taluk', `eq.${taluk}`);
+    eventParams.set('taluk', `eq.${taluk}`);
+  }
+
+  const [reportsRes, eventsRes, updates] = await Promise.all([
+    supabase(`outage_reports?${reportParams}`),
+    supabase(`outage_events?${eventParams}`),
+    fetchActiveOperatorUpdates(env, { district, taluk }),
+  ]);
+  if (!reportsRes.ok || !eventsRes.ok) {
+    console.error('status fetch error', reportsRes.status, eventsRes.status);
+    return jsonResponse({ error: 'Failed to fetch status' }, 502);
+  }
+
+  const { groups, comments } = buildStatus(
+    (await reportsRes.json()) as ReportRow[],
+    (await eventsRes.json()) as EventRow[],
+    { now, outageWindowMin: cfg.windowMin },
+  );
+
+  return jsonResponse(
+    {
+      generated_at: now.toISOString(),
+      district,
+      taluk: taluk ?? null,
+      window_min: cfg.rightNowMin,
+      outage_window_min: cfg.windowMin,
+      outage_min_reports: cfg.minReports,
+      groups,
+      comments,
+      operator_updates: updates,
+    },
+    200,
+    { 'Cache-Control': 'public, max-age=30' },
+  );
+}
+
+/** GET /v1/outages/active — every live "Likely outage" across Kerala, for the
+ *  homepage. */
+async function handleActiveOutages(env: Env): Promise<Response> {
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse({ error: 'Supabase not configured' }, 503);
+
+  const cfg = outageConfig(env);
+  const now = new Date();
+  const fresh = new Date(now.getTime() - cfg.windowMin * 60_000).toISOString();
+
+  const eventsRes = await supabase(
+    `outage_events?${new URLSearchParams({
+      select: EVENT_COLUMNS,
+      ended_at: 'is.null',
+      last_report_at: `gte.${fresh}`,
+      order: 'last_report_at.desc',
+      limit: '100',
+    })}`,
+  );
+  if (!eventsRes.ok) {
+    console.error('active outages fetch error', eventsRes.status);
+    return jsonResponse({ error: 'Failed to fetch outages' }, 502);
+  }
+  const events = (await eventsRes.json()) as EventRow[];
+
+  // Reports in the detection window for the affected taluks, for live counts.
+  let reports: ReportRow[] = [];
+  if (events.length) {
+    const districts = [...new Set(events.map((e) => e.district))];
+    const reportsRes = await supabase(
+      `outage_reports?${new URLSearchParams({
+        select: REPORT_COLUMNS,
+        district: `in.(${districts.map((d) => `"${d}"`).join(',')})`,
+        hidden: 'eq.false',
+        last_seen_at: `gte.${fresh}`,
+        limit: '5000',
+      })}`,
+    );
+    if (reportsRes.ok) reports = (await reportsRes.json()) as ReportRow[];
+  }
+
+  const { groups } = buildStatus(reports, events, { now, outageWindowMin: cfg.windowMin });
+  return jsonResponse(
+    {
+      generated_at: now.toISOString(),
+      window_min: cfg.windowMin,
+      outages: groups.filter((g) => g.likely_outage),
+    },
+    200,
+    { 'Cache-Control': 'public, max-age=30' },
+  );
+}
+
+/** Close outage events with no reports for a full detection window. */
+async function closeStaleOutages(env: Env): Promise<void> {
+  const supabase = makeSupabase(env);
+  if (!supabase) return;
+  const res = await supabase('rpc/close_stale_outage_events', {
+    method: 'POST',
+    body: JSON.stringify({ p_window_min: outageConfig(env).windowMin }),
+  });
+  if (!res.ok) console.error('close_stale_outage_events error', res.status, await res.text());
+}
+
 /** GET /v1/points — public, located results for the live map. */
 async function handlePoints(url: URL, env: Env): Promise<Response> {
   const supabase = makeSupabase(env);
@@ -1023,6 +1256,17 @@ export default {
       return handleLocate(url);
     }
 
+    // Outage reporting
+    if (method === 'POST' && path === '/v1/reports') {
+      return handlePostReport(request, env);
+    }
+    if (method === 'GET' && path === '/v1/status') {
+      return handleStatus(url, env);
+    }
+    if (method === 'GET' && path === '/v1/outages/active') {
+      return handleActiveOutages(env);
+    }
+
     // GET /v1/points
     if (method === 'GET' && path === '/v1/points') {
       return handlePoints(url, env);
@@ -1044,5 +1288,9 @@ export default {
     }
 
     return jsonResponse({ error: 'Not found' }, 404);
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(closeStaleOutages(env));
   },
 } satisfies ExportedHandler<Env>;

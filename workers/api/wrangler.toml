@@ -8,6 +8,10 @@ compatibility_flags = ["nodejs_compat"]
 # pattern = "api.netundo.in/*"
 # zone_name = "netundo.in"
 
+# Close outage events that have stopped receiving reports.
+[triggers]
+crons = ["*/5 * * * *"]
+
 [vars]
 # Outage detection: a provider is a "Likely outage" in a taluk once it gets
 # OUTAGE_MIN_REPORTS reports from distinct users within OUTAGE_WINDOW_MIN.
@@ -16,3 +20,7 @@ OUTAGE_WINDOW_MIN = "30"
 # How far back the "Right now" section counts reports.
 RIGHT_NOW_WINDOW_MIN = "60"
 SUPABASE_URL = "https://poxwxxutfancmqguclse.supabase.co"
+
+# Secrets (not in this file):
+#   wrangler secret put SUPABASE_SERVICE_KEY
+#   wrangler secret put IP_HASH_SALT   # long random string; keys IP/token HMACs
