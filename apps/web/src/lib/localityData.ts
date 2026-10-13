@@ -4,7 +4,7 @@ import {
   type ScoredNetwork,
 } from './networkScore';
 import { findDistrict, findTaluk, slugify } from './slug';
-import { INDEX_MIN_TESTS } from './config';
+import { FAQ_HEDGE_BELOW, FAQ_MIN_TESTS, INDEX_MIN_TESTS } from './config';
 
 /**
  * Build-time data layer for locality (district / taluk / village) pages.
@@ -482,9 +482,16 @@ export function proseInputFromTaluk(data: TalukData): AreaProseInput {
   };
 }
 
-/** The leading broadband provider, as a sentence fragment, or null. */
+/** The leading broadband provider, but only once there is enough broadband
+ *  data to name one at all (FAQ_MIN_TESTS). */
 function broadbandLeader(input: AreaProseInput): ScoredNetwork | null {
+  if (input.broadband.samples < FAQ_MIN_TESTS) return null;
   return input.providers.broadband[0] ?? null;
+}
+
+/** True when a "fastest provider" claim must be framed as early data. */
+function isEarly(samples: number): boolean {
+  return samples < FAQ_HEDGE_BELOW;
 }
 
 /** Unique, data-driven intro paragraph. Template varies by place to reduce the
@@ -493,16 +500,18 @@ export function localizedIntro(input: AreaProseInput): string {
   const { name, parent, broadband, mobile, totalSamples } = input;
   const bb = fmt(broadband.downloadMbps, 'Mbps');
   const mb = fmt(mobile.downloadMbps, 'Mbps');
-  const fastest = broadbandLeader(input)?.name;
+  const leader = broadbandLeader(input);
+  const fastest = leader?.name;
+  const early = isEarly(broadband.samples);
 
   if (totalSamples < INDEX_SAMPLE_THRESHOLD) {
     return `Internet speed data for ${name}, ${parent} is still being collected. Run a free speed test from ${name} to be among the first to put your area's broadband and mobile network performance on the map.`;
   }
 
   const templates = [
-    `Across ${totalSamples} crowdsourced tests in ${name}, ${parent}, home broadband connections record a typical download of ${bb} while mobile data averages ${mb}. ${fastest ? `${fastest} currently leads local broadband results.` : ''}`,
-    `In ${name} (${parent}), netundo users measured a median home-broadband download of ${bb} and mobile-data download of ${mb} across ${totalSamples} real-world tests. ${fastest ? `The strongest broadband provider so far is ${fastest}.` : ''}`,
-    `${name}'s internet, based on ${totalSamples} community speed tests in ${parent}: home broadband lands around ${bb} and mobile data around ${mb}. ${fastest ? `${fastest} tops the local broadband rankings.` : ''}`,
+    `Across ${totalSamples} crowdsourced tests in ${name}, ${parent}, home broadband connections record a typical download of ${bb} while mobile data averages ${mb}. ${fastest ? (early ? `On early data, ${fastest} leads local broadband results.` : `${fastest} currently leads local broadband results.`) : ''}`,
+    `In ${name} (${parent}), netundo users measured a median home-broadband download of ${bb} and mobile-data download of ${mb} across ${totalSamples} real-world tests. ${fastest ? (early ? `Early data puts ${fastest} ahead on broadband.` : `The strongest broadband provider so far is ${fastest}.`) : ''}`,
+    `${name}'s internet, based on ${totalSamples} community speed tests in ${parent}: home broadband lands around ${bb} and mobile data around ${mb}. ${fastest ? (early ? `${fastest} is ahead on broadband in early results.` : `${fastest} tops the local broadband rankings.`) : ''}`,
   ];
   return templates[variant(`${parent}-${name}`, templates.length)].trim();
 }
@@ -512,21 +521,21 @@ export interface FaqItem {
   answer: string;
 }
 
-/** "Fastest provider" FAQ entry for one connection kind, or null. */
-function fastestFaq(
+/** "Fastest provider" FAQ entry for one connection kind. Omitted below
+ *  FAQ_MIN_TESTS; hedged as early data below FAQ_HEDGE_BELOW. */
+export function fastestFaq(
   name: string,
   leader: ScoredNetwork | undefined,
   summary: MetricSummary,
   label: string,
   noun: string,
 ): FaqItem | null {
-  if (!leader) return null;
-  return {
-    question: `Which is the fastest ${label} provider in ${name}?`,
-    answer: `Based on ${summary.samples} community ${noun} tests, ${leader.name} currently records the best overall results in ${name}${
-      leader.downloadMbps != null ? `, with a typical download of ${fmt(leader.downloadMbps, 'Mbps')}` : ''
-    }.`,
-  };
+  if (!leader || summary.samples < FAQ_MIN_TESTS) return null;
+  const speed = leader.downloadMbps != null ? `, with a typical download of ${fmt(leader.downloadMbps, 'Mbps')}` : '';
+  const answer = isEarly(summary.samples)
+    ? `Based on early data from ${summary.samples} ${noun} tests, ${leader.name} has recorded the best overall results in ${name} so far${speed}. With this few tests the ranking can easily change — run a test to make it more reliable.`
+    : `Based on ${summary.samples} community ${noun} tests, ${leader.name} currently records the best overall results in ${name}${speed}.`;
+  return { question: `Which is the fastest ${label} provider in ${name}?`, answer };
 }
 
 /** Data-driven FAQ for the page and its FAQPage JSON-LD. Broadband and mobile
