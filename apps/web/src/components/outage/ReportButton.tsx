@@ -13,10 +13,13 @@ const ReportSheet = dynamic(() => import('./ReportSheet'), { ssr: false });
 export function ReportButton({
   area,
   size = 'lg',
+  tone = 'red',
   className = '',
 }: {
   area?: ReportArea;
   size?: 'lg' | 'sm';
+  /** 'light' for use on coloured backgrounds (homepage hero). */
+  tone?: 'red' | 'light';
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -29,7 +32,9 @@ export function ReportButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`inline-flex items-center justify-center bg-red-600 font-bold text-white shadow-sm transition-colors hover:bg-red-700 ${sizing} ${className}`}
+        className={`inline-flex items-center justify-center font-bold shadow-sm transition-colors ${
+          tone === 'light' ? 'bg-white text-red-600 hover:bg-red-50' : 'bg-red-600 text-white hover:bg-red-700'
+        } ${sizing} ${className}`}
       >
         <WifiOff className={size === 'lg' ? 'h-5 w-5' : 'h-4 w-4'} />
         <span className="text-left leading-tight">

@@ -15,11 +15,11 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'netundo — Kerala Speed Test',
-  description: 'Crowdsourced internet speed test for Kerala. Measure your connection and help map network quality across all 14 districts.',
+  title: 'netundo — Is the net down near you? Kerala outages & speed test',
+  description: 'Live, crowdsourced internet outage reports for every Kerala district, taluk and village — plus a free speed test and provider rankings for home broadband and mobile data.',
   openGraph: {
-    title: 'netundo — Kerala Speed Test',
-    description: 'Test your internet speed and contribute to Kerala\'s network quality map.',
+    title: 'netundo — Is the net down near you?',
+    description: 'Live internet outage reports and speed tests across Kerala. Net illa? Report it.',
     type: 'website',
   },
 };
