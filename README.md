@@ -60,7 +60,7 @@ environment variable.
 |---|---|---|---|
 | `SUPABASE_URL` | var | (none) | Supabase project URL |
 | `SUPABASE_SERVICE_KEY` | **secret** | (none) | `wrangler secret put SUPABASE_SERVICE_KEY` |
-| `IP_HASH_SALT` | **secret** | (dev fallback) | A long random string. It keys the HMACs of IPs (rotated daily) and client tokens used for dedupe and rate limits. **Required in production.** |
+| `IP_HASH_SALT` | **secret** | (none) | A long random string. It keys the HMACs of IPs (rotated daily) and client tokens used for dedupe and rate limits. **Required:** without it, reports and comments return 503 rather than store weak hashes. For local dev, put it in `workers/api/.dev.vars`. |
 | `OUTAGE_MIN_REPORTS` | var | `3` | Distinct reporters needed for a **Likely outage**… |
 | `OUTAGE_WINDOW_MIN` | var | `30` | …within this many minutes. An outage clears once no reports arrive for this long. |
 | `RIGHT_NOW_WINDOW_MIN` | var | `60` | How far back the Right now section counts reports |
@@ -131,7 +131,7 @@ additive **except 012**.
 |---|---|---|
 | 001–010 | initial schema, aggregates, benchmarks, feedback | existing |
 | 011 | `provider_village.sql` | `test_results.village`, self-reported provider, client token hash. **Apply before deploying the API.** |
-| 012 | `rls_hardening.sql` | **Review first.** Drops the insert/update policies that let the public anon key write to `test_results` and the benchmark tables. No data is touched. |
+| 012 | `rls_hardening.sql` | **Review first.** Drops the insert/update policies that let the public anon key write to `test_results` and the benchmark tables. It also limits anon `SELECT` on `test_results` to non-sensitive columns, hiding `ip_hash` and `client_token_hash` (so anon `select=*` stops working; the site never uses it). No data is touched. Apply after 011. |
 | 013 | `outages.sql` | Outage reports and events, `submit_outage_report()`, `close_stale_outage_events()` |
 | 014 | `operator_updates.sql` | Operators, updates, update areas |
 | 015 | `area_comments.sql` | Comments and flags, `submit_area_comment()`, `report_area_comment()` |

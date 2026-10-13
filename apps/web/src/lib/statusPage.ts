@@ -41,7 +41,13 @@ export interface ResolvedStatusPath {
 /** Map /status/{district}/{taluk}/{brand} slugs back to canonical names. */
 export function resolveStatusPath(segments: string[], kindParam: string | null): ResolvedStatusPath | null {
   if (segments.length !== 3) return null;
-  const [districtSlug, talukSlug, brandSegment] = segments.map((s) => decodeURIComponent(s).toLowerCase());
+  let decoded: string[];
+  try {
+    decoded = segments.map((s) => decodeURIComponent(s).toLowerCase());
+  } catch {
+    return null; // malformed %-escape → 404
+  }
+  const [districtSlug, talukSlug, brandSegment] = decoded;
   const district = KERALA_DISTRICTS.find((d) => slugifyPlace(d) === districtSlug);
   if (!district) return null;
   const taluk = KERALA_TALUKS[district]?.find((t) => slugifyPlace(t) === talukSlug);

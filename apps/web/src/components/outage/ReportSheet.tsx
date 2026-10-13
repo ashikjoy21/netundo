@@ -57,22 +57,27 @@ export default function ReportSheet({ area: pageArea, onClose }: { area?: Report
   const [result, setResult] = useState<(SubmitResult & { status: OutageStatusWord }) | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  // Prefill: page area (most specific) → last reported area → nothing.
+  // Prefill once per page area: page area (most specific) → last reported
+  // area → nothing. Keyed on the primitive fields so parent re-renders (e.g.
+  // the Right now poll) never wipe what the user has typed.
+  const pageDistrict = pageArea?.district;
+  const pageTaluk = pageArea?.taluk;
+  const pageVillage = pageArea?.village;
   useEffect(() => {
     const saved = getSavedArea();
-    if (pageArea?.taluk) {
-      setArea({ district: pageArea.district, taluk: pageArea.taluk, village: pageArea.village });
-    } else if (saved && (!pageArea || saved.district === pageArea.district)) {
+    if (pageDistrict && pageTaluk) {
+      setArea({ district: pageDistrict, taluk: pageTaluk, village: pageVillage });
+    } else if (saved && (!pageDistrict || saved.district === pageDistrict)) {
       setArea(saved);
-    } else if (pageArea) {
-      setArea({ district: pageArea.district });
+    } else if (pageDistrict) {
+      setArea({ district: pageDistrict });
     }
     const savedProvider = getSavedProvider();
     if (savedProvider) {
       setProvider({ reported: savedProvider.reported, name: savedProvider.name ?? '' });
       if (savedProvider.kind) setKind(savedProvider.kind);
     }
-  }, [pageArea]);
+  }, [pageDistrict, pageTaluk, pageVillage]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();

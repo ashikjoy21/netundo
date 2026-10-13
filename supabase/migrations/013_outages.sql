@@ -193,7 +193,8 @@ begin
     and brand_key = p_brand_key and kind = p_kind
     and ended_at is null;
 
-  -- Open a new event at the threshold; extend an open one on any new report.
+  -- Open a new event at the threshold, and extend an open one only while the
+  -- threshold is still met — one person re-reporting can't keep it alive.
   if v_event_id is null and v_reporters >= p_min_reports then
     insert into public.outage_events (district, taluk, brand_key, provider_name, kind, started_at, last_report_at)
     values (
@@ -206,7 +207,7 @@ begin
     returning id, started_at into v_event_id, v_event_started;
   end if;
 
-  if v_event_id is not null then
+  if v_event_id is not null and v_reporters >= p_min_reports then
     update public.outage_events e
        set last_report_at = now(),
            peak_reporters = greatest(e.peak_reporters, v_reporters),

@@ -67,6 +67,8 @@ const str = (v: unknown): string => (typeof v === 'string' ? v.replace(/\s+/g, '
 export function brandKeyForAnswer(reported: string, name: string): { brandKey: string; providerName: string | null } | null {
   if (!isKnownProviderSlug(reported)) return null;
   if (reported === LCO_SLUG || reported === OTHER_SLUG) {
+    // Operator names are shown publicly (headlines, share previews): moderate them.
+    if (!moderateText(name, 60).ok) return null;
     const key = normalizeOperatorName(name);
     if (!key) return null;
     return { brandKey: `${reported}:${key}`, providerName: name.slice(0, 60) };
@@ -80,7 +82,12 @@ export function validateReport(body: ReportPayload): { ok: true; report: ValidRe
   if (!isKnownDistrict(district)) return { ok: false, error: 'Unknown district', field: 'district' };
   if (!isKnownTaluk(district, taluk)) return { ok: false, error: 'Unknown taluk for this district', field: 'taluk' };
 
-  const village = str(body.village).slice(0, 80) || null;
+  let village: string | null = null;
+  if (str(body.village)) {
+    const v = moderateText(str(body.village), 80);
+    if (!v.ok) return { ok: false, error: 'Invalid village', field: 'village' };
+    village = v.text;
+  }
 
   const answer = brandKeyForAnswer(str(body.provider?.reported).toLowerCase(), str(body.provider?.name));
   if (!answer) return { ok: false, error: 'Choose a provider (and name it for a cable operator / other)', field: 'provider' };
@@ -202,7 +209,7 @@ function topKey(counts: Record<string, number>): string | null {
 export function buildStatus(
   reports: ReportRow[],
   events: EventRow[],
-  opts: { now: Date; outageWindowMin: number },
+  opts: { now: Date; outageWindowMin: number; minReports: number },
 ): { groups: StatusGroup[]; comments: StatusComment[] } {
   const outageCutoff = opts.now.getTime() - opts.outageWindowMin * 60_000;
   const liveEvents = new Map<string, EventRow>();
@@ -231,7 +238,8 @@ export function buildStatus(
       if (r.last_seen_at > last) last = r.last_seen_at;
     }
     const recent = rows.filter((r) => new Date(r.last_seen_at).getTime() >= outageCutoff);
-    const event = liveEvents.get(key) ?? null;
+    // Live only while the threshold is still met inside the detection window.
+    const event = countReporters(recent) >= opts.minReports ? (liveEvents.get(key) ?? null) : null;
     groups.push({
       district: first.district,
       taluk: first.taluk,

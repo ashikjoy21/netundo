@@ -93,7 +93,8 @@ begin
 end;
 $$;
 
--- Flag a comment. Idempotent per person; auto-hides at p_hide_at flags.
+-- Flag a comment. Idempotent per person; auto-hides once flags come from
+-- p_hide_at distinct IPs (so one person clearing storage can't hide it).
 create or replace function report_area_comment(
   p_comment_id uuid,
   p_token_hash text,
@@ -121,7 +122,7 @@ begin
 
   update public.area_comments c
      set report_count = (select count(*) from public.area_comment_reports r where r.comment_id = c.id),
-         hidden = c.hidden or (select count(*) from public.area_comment_reports r where r.comment_id = c.id) >= p_hide_at
+         hidden = c.hidden or (select count(distinct r.ip_hash) from public.area_comment_reports r where r.comment_id = c.id) >= p_hide_at
    where c.id = p_comment_id
   returning report_count into v_count;
 

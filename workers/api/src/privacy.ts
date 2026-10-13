@@ -11,7 +11,13 @@ export interface PrivacyEnv {
   IP_HASH_SALT?: string;
 }
 
-let warned = false;
+/** Thrown when IP_HASH_SALT is missing; routes turn it into a 503 rather than
+ *  silently writing reversible hashes. Locally, put it in workers/api/.dev.vars. */
+export class MissingSaltError extends Error {
+  constructor() {
+    super('IP_HASH_SALT is not configured');
+  }
+}
 
 async function hmacHex(key: string, value: string): Promise<string> {
   const cryptoKey = await crypto.subtle.importKey(
@@ -28,12 +34,8 @@ async function hmacHex(key: string, value: string): Promise<string> {
 }
 
 function salt(env: PrivacyEnv): string {
-  if (env.IP_HASH_SALT) return env.IP_HASH_SALT;
-  if (!warned) {
-    console.warn('IP_HASH_SALT is not set; using an insecure development salt.');
-    warned = true;
-  }
-  return 'netundo-dev-only-salt';
+  if (!env.IP_HASH_SALT) throw new MissingSaltError();
+  return env.IP_HASH_SALT;
 }
 
 /** Daily-rotating keyed hash of the caller's IP. */

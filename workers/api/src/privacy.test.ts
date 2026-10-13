@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dailyIpHash, tokenHash } from './privacy';
+import { MissingSaltError, dailyIpHash, tokenHash } from './privacy';
 
 describe('dailyIpHash', () => {
   const env = { IP_HASH_SALT: 'test-secret' };
@@ -13,6 +13,9 @@ describe('dailyIpHash', () => {
   it('depends on the secret', async () => {
     const d = new Date('2026-10-13T01:00:00Z');
     expect(await dailyIpHash('1.2.3.4', env, d)).not.toBe(await dailyIpHash('1.2.3.4', { IP_HASH_SALT: 'other' }, d));
+  });
+  it('refuses to hash without the secret', async () => {
+    await expect(dailyIpHash('1.2.3.4', {})).rejects.toBeInstanceOf(MissingSaltError);
   });
   it('hashes tokens', async () => {
     expect(await tokenHash('abc', env)).toMatch(/^[0-9a-f]{64}$/);

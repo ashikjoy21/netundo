@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { WifiOff } from 'lucide-react';
 import type { ReportArea } from './ReportSheet';
@@ -26,6 +26,7 @@ export function ReportButton({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
   useEffect(() => {
     if (openOnHash && window.location.hash === openOnHash) setOpen(true);
   }, [openOnHash]);
@@ -48,7 +49,7 @@ export function ReportButton({
           {size === 'lg' && <span className="block text-xs font-medium opacity-90">നെറ്റ് ഇല്ലേ? റിപ്പോർട്ട് ചെയ്യൂ</span>}
         </span>
       </button>
-      {open && <ReportSheet area={area} onClose={() => setOpen(false)} />}
+      {open && <ReportSheet area={area} onClose={close} />}
     </>
   );
 }

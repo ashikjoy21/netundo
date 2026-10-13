@@ -27,7 +27,7 @@ import { displayNameForKey, isKnownProviderSlug } from '@netundo/types';
 import { aggregateByBrand, percentile, type BrandTestRow, type PlaceGrouping } from './aggregate';
 import { locateTaluk } from './locate';
 import { buildStatus, isKnownDistrict, isKnownTaluk, validateReport, type EventRow, type ReportPayload, type ReportRow } from './outages';
-import { dailyIpHash, tokenHash } from './privacy';
+import { MissingSaltError, dailyIpHash, tokenHash } from './privacy';
 import { validateComment } from './comments';
 import {
   isVisibleUpdate,
@@ -257,6 +257,30 @@ function makeSupabase(env: Env) {
       },
     });
   };
+}
+
+/** Fetch up to `maxRows` rows by paging 1,000 at a time — PostgREST silently
+ *  caps a single response at the project's max-rows (1,000 by default). */
+async function fetchAllRows<T>(
+  supabase: NonNullable<ReturnType<typeof makeSupabase>>,
+  table: string,
+  params: URLSearchParams,
+  maxRows: number,
+): Promise<{ ok: true; rows: T[] } | { ok: false; status: number }> {
+  const PAGE = 1000;
+  const rows: T[] = [];
+  for (let offset = 0; offset < maxRows; offset += PAGE) {
+    const page = new URLSearchParams(params);
+    page.set('limit', String(Math.min(PAGE, maxRows - offset)));
+    page.set('offset', String(offset));
+    const res = await supabase(`${table}?${page}`);
+    if (!res.ok) return { ok: false, status: res.status };
+    const batch = (await res.json()) as T[];
+    if (!Array.isArray(batch)) return { ok: false, status: 502 };
+    rows.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return { ok: true, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -493,7 +517,9 @@ async function handleGetResult(id: string, env: Env): Promise<Response> {
     id: `eq.${id}`,
     consent_public: 'eq.true',
     is_outlier: 'eq.false',
-    select: '*',
+    // Explicit public columns: never return ip_hash / client_token_hash.
+    select:
+      'id,created_at,download_mbps,upload_mbps,latency_ms,jitter_ms,loaded_latency_down_ms,loaded_latency_up_ms,packet_loss_pct,aim_streaming,aim_gaming,aim_rt_comms,connection_type,isp_name,asn,district,taluk,village,edge_colo,plan_mbps,provider_reported,provider_reported_name',
     limit: '1',
   });
 
@@ -704,9 +730,9 @@ async function handleBrandAggregate(url: URL, env: Env): Promise<Response> {
     select: `${baseColumns},village,provider_reported,provider_reported_name`,
     is_outlier: 'eq.false',
     source: 'eq.netundo',
-    order: 'created_at.desc',
-    limit: period === 'weekly' || period === 'monthly' ? '5000' : '50000',
+    order: 'created_at.desc,id.desc',
   });
+  const maxRows = period === 'weekly' || period === 'monthly' ? 5000 : 50000;
   const days = PERIOD_DAYS[period];
   if (days != null) {
     params.set('created_at', `gte.${new Date(Date.now() - days * 86_400_000).toISOString()}`);
@@ -716,18 +742,17 @@ async function handleBrandAggregate(url: URL, env: Env): Promise<Response> {
   if (district) params.set('district', `eq.${district}`);
   if (taluk) params.set('taluk', `eq.${taluk}`);
 
-  let res = await supabase(`test_results?${params}`);
-  if (res.status === 400) {
+  let result = await fetchAllRows<BrandTestRow>(supabase, 'test_results', params, maxRows);
+  if (!result.ok && result.status === 400) {
     // Migration 011 not applied yet: fall back to the columns that exist.
     params.set('select', baseColumns);
-    res = await supabase(`test_results?${params}`);
+    result = await fetchAllRows<BrandTestRow>(supabase, 'test_results', params, maxRows);
   }
-  if (!res.ok) {
-    console.error('Supabase brand aggregate error', res.status);
+  if (!result.ok) {
+    console.error('Supabase brand aggregate error', result.status);
     return jsonResponse({ error: 'Failed to fetch aggregates' }, 502);
   }
-  const rows = (await res.json()) as BrandTestRow[];
-  if (!Array.isArray(rows)) return jsonResponse({ error: 'Invalid aggregate response' }, 502);
+  const rows = result.rows;
 
   return jsonResponse(
     aggregateByBrand(rows, grouping, { brand: url.searchParams.get('brand'), kind }),
@@ -767,8 +792,7 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
     // Real aggregates use netundo-measured tests only; third-party tests
     // (source='mlab') are excluded so they never skew our methodology.
     source: 'eq.netundo',
-    order: 'created_at.desc',
-    limit: byTaluk ? '50000' : '2000',
+    order: 'created_at.desc,id.desc',
   });
 
   if (!byTaluk) {
@@ -784,17 +808,12 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
   else if (isp) params.set('isp_name', `eq.${isp}`);
   if (connectionType) params.set('connection_type', `eq.${connectionType}`);
 
-  const res = await supabase(`test_results?${params}`);
-
-  if (!res.ok) {
-    console.error('Supabase aggregate error', res.status);
+  const result = await fetchAllRows<TestResultRow>(supabase, 'test_results', params, byTaluk ? 50000 : 2000);
+  if (!result.ok) {
+    console.error('Supabase aggregate error', result.status);
     return jsonResponse({ error: 'Failed to fetch aggregates' }, 502);
   }
-
-  const rows = (await res.json()) as TestResultRow[];
-  if (!Array.isArray(rows)) {
-    return jsonResponse({ error: 'Invalid aggregate response' }, 502);
-  }
+  const rows = result.rows;
 
   return jsonResponse(aggregateTestResults(rows, byTaluk));
 }
@@ -829,23 +848,18 @@ async function fetchActiveOperatorUpdates(
   const supabase = makeSupabase(env);
   if (!supabase) return [];
   try {
-    const areaParams = new URLSearchParams({ select: 'update_id', district: `eq.${area.district}`, limit: '200' });
-    if (area.taluk) areaParams.set('or', `(taluk.is.null,taluk.eq."${area.taluk}")`);
-    const areasRes = await supabase(`operator_update_areas?${areaParams}`);
-    if (!areasRes.ok) return [];
-    const ids = [...new Set(((await areasRes.json()) as Array<{ update_id: string }>).map((r) => r.update_id))];
-    if (!ids.length) return [];
-
+    // One query: recent updates that have at least one area covering this place
+    // (!inner). The embedded areas come back filtered to the matching rows.
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const res = await supabase(
-      `operator_updates?${new URLSearchParams({
-        select: UPDATE_SELECT,
-        id: `in.(${ids.join(',')})`,
-        updated_at: `gte.${since}`,
-        order: 'updated_at.desc',
-        limit: '20',
-      })}`,
-    );
+    const params = new URLSearchParams({
+      select: UPDATE_SELECT.replace('operator_update_areas(', 'operator_update_areas!inner('),
+      updated_at: `gte.${since}`,
+      'operator_update_areas.district': `eq.${area.district}`,
+      order: 'updated_at.desc',
+      limit: '20',
+    });
+    if (area.taluk) params.set('operator_update_areas.or', `(taluk.is.null,taluk.eq."${area.taluk}")`);
+    const res = await supabase(`operator_updates?${params}`);
     if (!res.ok) return [];
     const now = new Date();
     return ((await res.json()) as UpdateRow[])
@@ -968,6 +982,9 @@ async function patchUpdate(
     body: JSON.stringify(cols),
     headers: { Prefer: 'return=minimal' },
   });
+  if (res.status === 409) {
+    return jsonResponse({ error: 'Another of your updates already uses this external_ref', field: 'external_ref' }, 409);
+  }
   if (!res.ok) {
     console.error('operator update patch error', res.status, await res.text());
     return jsonResponse({ error: 'Failed to update' }, 502);
@@ -1003,6 +1020,9 @@ async function handleCreateOperatorUpdate(request: Request, env: Env): Promise<R
     body: JSON.stringify({ operator_id: operator.id, brand_key: operator.brand_key, ...updateColumns(v.fields) }),
     headers: { Prefer: 'return=representation' },
   });
+  if (insertRes.status === 409) {
+    return jsonResponse({ error: 'An update with this external_ref was created concurrently; retry', field: 'external_ref' }, 409);
+  }
   if (!insertRes.ok) {
     console.error('operator update insert error', insertRes.status, await insertRes.text());
     return jsonResponse({ error: 'Failed to create update' }, 502);
@@ -1173,7 +1193,7 @@ async function handleStatus(url: URL, env: Env): Promise<Response> {
   const { groups, comments } = buildStatus(
     (await reportsRes.json()) as ReportRow[],
     (await eventsRes.json()) as EventRow[],
-    { now, outageWindowMin: cfg.windowMin },
+    { now, outageWindowMin: cfg.windowMin, minReports: cfg.minReports },
   );
 
   return jsonResponse(
@@ -1234,7 +1254,7 @@ async function handleActiveOutages(env: Env): Promise<Response> {
     if (reportsRes.ok) reports = (await reportsRes.json()) as ReportRow[];
   }
 
-  const { groups } = buildStatus(reports, events, { now, outageWindowMin: cfg.windowMin });
+  const { groups } = buildStatus(reports, events, { now, outageWindowMin: cfg.windowMin, minReports: cfg.minReports });
   return jsonResponse(
     {
       generated_at: now.toISOString(),
@@ -1577,6 +1597,24 @@ async function handlePostFeedback(request: Request, env: Env): Promise<Response>
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    try {
+      return await route(request, env);
+    } catch (err) {
+      if (err instanceof MissingSaltError) {
+        console.error('IP_HASH_SALT secret is missing; refusing to write hashed identifiers');
+        return jsonResponse({ error: 'Service temporarily unavailable' }, 503);
+      }
+      throw err;
+    }
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(closeStaleOutages(env));
+  },
+} satisfies ExportedHandler<Env>;
+
+async function route(request: Request, env: Env): Promise<Response> {
+  {
     const url = new URL(request.url);
     const { method } = request;
     const path = url.pathname;
@@ -1675,9 +1713,5 @@ export default {
     }
 
     return jsonResponse({ error: 'Not found' }, 404);
-  },
-
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(closeStaleOutages(env));
-  },
-} satisfies ExportedHandler<Env>;
+  }
+}

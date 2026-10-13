@@ -62,7 +62,7 @@ describe('buildStatus', () => {
         report({ brand_key: 'jio', provider_name: 'Jio', kind: 'mobile', client_token_hash: 't4' }),
       ],
       [event],
-      { now, outageWindowMin: 30 },
+      { now, outageWindowMin: 30, minReports: 3 },
     );
     expect(groups).toHaveLength(2);
     expect(groups[0]).toMatchObject({ brand_key: 'kerala-vision', reporters: 3, likely_outage: true, status: 'down', top_village: 'Kakkanad' });
@@ -73,14 +73,24 @@ describe('buildStatus', () => {
     const { groups } = buildStatus([report({ last_seen_at: ago(45) })], [{ ...event, last_report_at: ago(45) }], {
       now,
       outageWindowMin: 30,
+      minReports: 3,
     });
     expect(groups[0].likely_outage).toBe(false);
     expect(groups[0].recent_reporters).toBe(0);
     expect(groups[0].reporters).toBe(1);
   });
 
+  it('drops the flag when only one person keeps re-reporting', () => {
+    const { groups } = buildStatus([report({ last_seen_at: ago(1) }), report({ client_token_hash: 't2', ip_hash: 'b', last_seen_at: ago(40) })], [event], {
+      now,
+      outageWindowMin: 30,
+      minReports: 3,
+    });
+    expect(groups[0].likely_outage).toBe(false);
+  });
+
   it('returns the latest comments', () => {
-    const { comments } = buildStatus([report({ comment: 'no net since 7pm' })], [], { now, outageWindowMin: 30 });
+    const { comments } = buildStatus([report({ comment: 'no net since 7pm' })], [], { now, outageWindowMin: 30, minReports: 3 });
     expect(comments[0]).toMatchObject({ text: 'no net since 7pm', provider: 'Kerala Vision' });
   });
 });
@@ -107,6 +117,10 @@ describe('validateReport', () => {
       ok: true,
       report: { brandKey: 'lco:sree-cable', providerName: 'Sree Cable' },
     });
+  });
+  it('moderates public free text in village and operator names', () => {
+    expect(validateReport({ ...base, village: 'call 9847012345' })).toMatchObject({ ok: false, field: 'village' });
+    expect(validateReport({ ...base, provider: { reported: 'lco', name: 'shit cable' } })).toMatchObject({ ok: false, field: 'provider' });
   });
   it('rejects abusive comments', () => {
     expect(validateReport({ ...base, comment: 'useless shit' })).toMatchObject({ ok: false, field: 'comment' });

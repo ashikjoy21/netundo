@@ -43,7 +43,7 @@ export function validateComment(
     comment: {
       district,
       taluk,
-      village: str(input.village).slice(0, 80) || null,
+      village: str(input.village) && moderateText(str(input.village), 80).ok ? str(input.village) : null,
       brandKey: answer.brandKey,
       providerName: answer.providerName,
       kind,

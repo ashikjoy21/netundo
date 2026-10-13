@@ -24,6 +24,7 @@ describe('status share page', () => {
     expect(resolveStatusPath(['ernakulam', 'kanayannor', 'lco.sree-cable'], 'mobile')?.brandKey).toBe('lco:sree-cable');
     expect(resolveStatusPath(['ernakulam', 'nowhere', 'jio'], null)).toBeNull();
     expect(resolveStatusPath(['ernakulam', 'kanayannor'], null)).toBeNull();
+    expect(resolveStatusPath(['ernakulam', 'kanayannor', '%E0%A4%A'], null)).toBeNull();
   });
 
   it('builds the WhatsApp preview from live counts', () => {
