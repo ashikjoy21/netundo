@@ -129,3 +129,5 @@ export const KNOWN_KERALA_ISPS: Record<number, string> = {
   24560: 'Bharti Airtel',
   38266: 'BSNL Mobile',
 };
+
+export * from './providers';
