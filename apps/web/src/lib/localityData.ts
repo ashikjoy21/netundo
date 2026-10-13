@@ -3,7 +3,7 @@ import {
   type AggregateRow,
   type ScoredNetwork,
 } from './networkScore';
-import { findDistrict, findTaluk, slugify } from './slug';
+import { findDistrict, findTaluk, findVillage, slugify } from './slug';
 import { FAQ_HEDGE_BELOW, FAQ_MIN_TESTS, INDEX_MIN_TESTS } from './config';
 
 /**
@@ -389,6 +389,50 @@ export async function getTalukData(
     districtSlug: place.districtSlug,
     talukSlug: place.talukSlug,
     villages: place.villages,
+    totalSamples,
+    broadband: summarize(rows.filter((r) => r.kind === 'broadband')),
+    mobile: summarize(rows.filter((r) => r.kind === 'mobile')),
+    providers: providersByKind(rows),
+    indexable: totalSamples >= INDEX_SAMPLE_THRESHOLD,
+  };
+}
+
+export interface VillageData {
+  district: string;
+  taluk: string;
+  village: string;
+  districtSlug: string;
+  talukSlug: string;
+  villageSlug: string;
+  /** Other villages in the same taluk, for internal links. */
+  siblings: string[];
+  totalSamples: number;
+  broadband: MetricSummary;
+  mobile: MetricSummary;
+  providers: ProvidersByKind;
+  indexable: boolean;
+}
+
+/** Shape one village's data for rendering. Returns null for unknown slugs. */
+export async function getVillageData(
+  districtSlug: string,
+  talukSlug: string,
+  villageSlug: string,
+): Promise<VillageData | null> {
+  const place = findVillage(districtSlug, talukSlug, villageSlug);
+  if (!place) return null;
+
+  const rows = await getAreaRows(place.district, place.talukSlug, place.villageSlug);
+  const totalSamples = rows.reduce((sum, r) => sum + r.sample_count, 0);
+
+  return {
+    district: place.district,
+    taluk: place.taluk,
+    village: place.village,
+    districtSlug: place.districtSlug,
+    talukSlug: place.talukSlug,
+    villageSlug: place.villageSlug,
+    siblings: place.villages.filter((v) => v !== place.village),
     totalSamples,
     broadband: summarize(rows.filter((r) => r.kind === 'broadband')),
     mobile: summarize(rows.filter((r) => r.kind === 'mobile')),

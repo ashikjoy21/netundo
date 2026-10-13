@@ -1,12 +1,13 @@
 import type { MetadataRoute } from 'next';
-import { allDistrictParams, allTalukParams } from '@/lib/slug';
-import { getTalukData } from '@/lib/localityData';
+import { allDistrictParams, allTalukParams, allVillageParams } from '@/lib/slug';
+import { getTalukData, getVillageData } from '@/lib/localityData';
 import { absoluteUrl } from '@/lib/site';
 
 export const dynamic = 'force-static';
 
 /** Static export sitemap. Lists core pages, all district hubs, and only the
- *  taluk pages that have enough data to be indexable (thin pages stay out). */
+ *  taluk and village pages that have enough data to be indexable (thin pages,
+ *  below INDEX_MIN_TESTS, stay out and carry noindex). */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
 
@@ -38,5 +39,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: 'daily',
     }));
 
-  return [...staticEntries, ...districtEntries, ...talukEntries];
+  const villageData = await Promise.all(
+    allVillageParams().map(async (p) => ({ ...p, data: await getVillageData(p.district, p.taluk, p.village) })),
+  );
+  const villageEntries: MetadataRoute.Sitemap = villageData
+    .filter(({ data }) => data?.indexable)
+    .map(({ district, taluk, village }) => ({
+      url: absoluteUrl(`/kerala/${district}/${taluk}/${village}`),
+      lastModified: now,
+      changeFrequency: 'daily',
+    }));
+
+  return [...staticEntries, ...districtEntries, ...talukEntries, ...villageEntries];
 }

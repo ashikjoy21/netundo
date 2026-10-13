@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Smartphone, Wifi, Cable, Loader2, LocateFixed } from 'lucide-react';
 import { KERALA_PLACES_SOURCE, keralaTaluksForDistrict, keralaVillagesForTaluk } from '@/lib/keralaPlaces';
 import { DISTRICT_LATLNG } from '@/lib/utils';
+import { locateArea } from '@/lib/locate';
 
 export type ConnectionType = 'mobile' | 'wifi' | 'wired';
 const KERALA_DISTRICTS = Object.keys(DISTRICT_LATLNG);
@@ -88,6 +89,13 @@ export function DistrictPicker({ onConfirm }: Props) {
         setDistrict(inferDistrict(pos.coords.latitude, pos.coords.longitude));
         setManualMode(false);
         setGeoState('idle');
+        // Refine to the exact taluk from boundary data (nearest-centroid district
+        // above is only an instant first guess).
+        void locateArea(pos.coords.latitude, pos.coords.longitude).then((area) => {
+          if (!area) return;
+          setDistrict(area.district);
+          setTaluk((current) => current || area.taluk);
+        });
       },
       (error) => {
         setCoords(null);

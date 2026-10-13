@@ -7,12 +7,14 @@
  *   GET  /v1/results/:id
  *   PATCH /v1/results/:id/provider
  *   GET  /v1/aggregate
+ *   GET  /v1/locate
  *   POST /v1/feedback
  *   GET  /v1/health
  */
 
 import { isKnownProviderSlug } from '@netundo/types';
 import { aggregateByBrand, percentile, type BrandTestRow, type PlaceGrouping } from './aggregate';
+import { locateTaluk } from './locate';
 
 // ---------------------------------------------------------------------------
 // Environment bindings
@@ -754,6 +756,24 @@ async function handleAggregate(url: URL, env: Env): Promise<Response> {
   return jsonResponse(aggregateTestResults(rows, byTaluk));
 }
 
+/** GET /v1/locate?lat=&lng= — which Kerala district/taluk a point is in.
+ *
+ * Clients send coordinates rounded to 2 dp (~1 km); we round again here and
+ * never store or log them. Responses are cacheable because the rounded URL is
+ * shared by everyone in the same ~1 km cell. */
+function handleLocate(url: URL): Response {
+  const lat = Number(url.searchParams.get('lat'));
+  const lng = Number(url.searchParams.get('lng'));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return jsonResponse({ error: 'lat and lng are required numbers' }, 422);
+  }
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  const area = locateTaluk(round2(lat), round2(lng));
+  return jsonResponse(area ?? { district: null, taluk: null }, 200, {
+    'Cache-Control': 'public, max-age=86400',
+  });
+}
+
 /** GET /v1/points — public, located results for the live map. */
 async function handlePoints(url: URL, env: Env): Promise<Response> {
   const supabase = makeSupabase(env);
@@ -996,6 +1016,11 @@ export default {
     // GET /v1/aggregate
     if (method === 'GET' && path === '/v1/aggregate') {
       return handleAggregate(url, env);
+    }
+
+    // GET /v1/locate
+    if (method === 'GET' && path === '/v1/locate') {
+      return handleLocate(url);
     }
 
     // GET /v1/points

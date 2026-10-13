@@ -128,7 +128,7 @@ export default async function TalukPage({ params }: PageProps) {
         <Faq items={faqs} />
       </section>
 
-      <VillageList villages={place.villages} placeName={place.taluk} />
+      <VillageList villages={place.villages} placeName={place.taluk} baseHref={`/kerala/${district}/${taluk}`} />
       <NearbyTaluks
         districtSlug={district}
         districtName={place.district}

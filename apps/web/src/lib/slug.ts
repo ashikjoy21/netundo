@@ -96,3 +96,33 @@ export function siblingTaluks(districtSlug: string, talukSlug: string): Array<{ 
     .filter((taluk) => slugify(taluk) !== talukSlug)
     .map((taluk) => ({ name: taluk, slug: slugify(taluk) }));
 }
+
+export interface VillageParams extends TalukParams {
+  village: string;
+}
+
+export interface VillageLocation extends TalukLocation {
+  village: string; // canonical display name
+  villageSlug: string;
+}
+
+/** All district/taluk/village route params, for generateStaticParams. */
+export function allVillageParams(): VillageParams[] {
+  const params: VillageParams[] = [];
+  for (const [district, taluks] of Object.entries(KERALA_VILLAGES)) {
+    for (const [taluk, villages] of Object.entries(taluks)) {
+      for (const village of villages) {
+        params.push({ district: slugify(district), taluk: slugify(taluk), village: slugify(village) });
+      }
+    }
+  }
+  return params;
+}
+
+/** Resolve a district/taluk/village slug triple back to canonical names. */
+export function findVillage(districtSlug: string, talukSlug: string, villageSlug: string): VillageLocation | null {
+  const taluk = findTaluk(districtSlug, talukSlug);
+  if (!taluk) return null;
+  const village = taluk.villages.find((v) => slugify(v) === villageSlug);
+  return village ? { ...taluk, village, villageSlug } : null;
+}
