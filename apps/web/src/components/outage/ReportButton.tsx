@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { WifiOff } from 'lucide-react';
 import type { ReportArea } from './ReportSheet';
@@ -14,8 +14,11 @@ export function ReportButton({
   area,
   size = 'lg',
   tone = 'red',
+  openOnHash,
   className = '',
 }: {
+  /** Open the form on load when the URL hash matches (e.g. "#report" from a share page). */
+  openOnHash?: string;
   area?: ReportArea;
   size?: 'lg' | 'sm';
   /** 'light' for use on coloured backgrounds (homepage hero). */
@@ -23,6 +26,9 @@ export function ReportButton({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (openOnHash && window.location.hash === openOnHash) setOpen(true);
+  }, [openOnHash]);
   const sizing =
     size === 'lg'
       ? 'gap-3 rounded-2xl px-5 py-4 text-base'

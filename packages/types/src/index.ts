@@ -134,3 +134,4 @@ export * from './providers';
 export * from './moderation';
 export * from './outage';
 export * from './statusPath';
+export * from './places';

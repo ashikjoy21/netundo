@@ -165,7 +165,7 @@ export function RightNow({ district, taluk, village }: { district: string; taluk
         </ul>
       )}
 
-      <ReportButton area={{ district, taluk, village }} size="lg" className="mt-4 w-full" />
+      <ReportButton area={{ district, taluk, village }} size="lg" openOnHash="#report" className="mt-4 w-full" />
     </section>
   );
 }
