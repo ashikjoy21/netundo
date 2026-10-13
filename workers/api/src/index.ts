@@ -5,10 +5,14 @@
  * Routes:
  *   POST /v1/results
  *   GET  /v1/results/:id
+ *   PATCH /v1/results/:id/provider
  *   GET  /v1/aggregate
  *   POST /v1/feedback
  *   GET  /v1/health
  */
+
+import { isKnownProviderSlug } from '@netundo/types';
+import { aggregateByBrand, percentile, type BrandTestRow, type PlaceGrouping } from './aggregate';
 
 // ---------------------------------------------------------------------------
 // Environment bindings
@@ -43,7 +47,7 @@ const KERALA_DISTRICTS: Set<string> = new Set([
 
 const CORS_HEADERS: HeadersInit = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Max-Age': '86400',
 };
@@ -71,6 +75,7 @@ interface ResultPayload {
   location: {
     district: string;
     taluk?: string;
+    village?: string;
     lat?: number;
     lng?: number;
     accuracyM?: number;
@@ -78,10 +83,20 @@ interface ResultPayload {
   plan?: {
     advertisedMbps?: number;
   };
+  /** Random per-browser token; lets this browser attach its provider answer later. */
+  clientToken?: string;
+  provider?: ProviderAnswer;
   consent: {
     sharePublicly: boolean;
     shareExactLocation: boolean;
   };
+}
+
+interface ProviderAnswer {
+  /** Brand slug from providers.ts, or 'lco' / 'other'. */
+  reported?: string;
+  /** Free-text name for 'lco' / 'other'. */
+  name?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,13 +144,47 @@ function jsonResponse(body: unknown, status = 200, extra?: HeadersInit): Respons
   return new Response(JSON.stringify(body), { status, headers });
 }
 
-/** SHA-256 of IP + salt, returned as hex string */
-async function hashIp(ip: string, salt = 'netundo-v1'): Promise<string> {
-  const data = new TextEncoder().encode(ip + salt);
-  const digest = await crypto.subtle.digest('SHA-256', data);
+/** SHA-256 of a string, returned as hex. */
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/** SHA-256 of IP + salt, returned as hex string */
+async function hashIp(ip: string, salt = 'netundo-v1'): Promise<string> {
+  return sha256Hex(ip + salt);
+}
+
+/** Client tokens are random strings the browser generates once and keeps in
+ *  localStorage. We only ever store their hash. */
+function validClientToken(token: unknown): token is string {
+  return typeof token === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(token);
+}
+
+/** Trimmed, length-capped free text, or null. */
+function shortText(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.replace(/\s+/g, ' ').trim();
+  return trimmed ? trimmed.slice(0, max) : null;
+}
+
+/** Validate a "Who's your provider?" answer into DB columns, or an error. */
+function providerColumns(
+  answer: ProviderAnswer | undefined,
+): { provider_reported: string; provider_reported_name: string | null } | { error: string } | null {
+  if (!answer || answer.reported == null) return null;
+  const reported = typeof answer.reported === 'string' ? answer.reported.trim().toLowerCase() : '';
+  if (!isKnownProviderSlug(reported)) return { error: 'provider.reported is not a known provider' };
+  const name = shortText(answer.name, 60);
+  if ((reported === 'lco' || reported === 'other') && !name) {
+    return { error: 'provider.name is required for a local cable operator or other provider' };
+  }
+  return {
+    provider_reported: reported,
+    provider_reported_name: reported === 'lco' || reported === 'other' ? name : null,
+  };
 }
 
 /** Generate a v4 UUID using the Web Crypto API */
@@ -262,6 +311,15 @@ async function handlePostResult(
   const id = uuidv4();
   const { summary, scores, client, location, plan, consent } = payload;
 
+  const provider = providerColumns(payload.provider);
+  if (provider && 'error' in provider) {
+    return jsonResponse({ error: provider.error }, 422);
+  }
+  const village = shortText(location.village, 80);
+  const clientTokenHash = validClientToken(payload.clientToken)
+    ? await sha256Hex(payload.clientToken)
+    : null;
+
   const planMbps =
     typeof plan?.advertisedMbps === 'number' &&
     plan.advertisedMbps > 0 &&
@@ -309,6 +367,11 @@ async function handlePostResult(
     // Kerala location
     district: location.district,
     taluk: location.taluk ?? null,
+    // New columns (migration 011) are only sent when set, so inserts keep
+    // working if the worker is deployed before the migration is applied.
+    ...(village ? { village } : {}),
+    ...(provider ? provider : {}),
+    ...(clientTokenHash ? { client_token_hash: clientTokenHash } : {}),
     // Exact location only stored on explicit consent, rounded to ~110 m for privacy.
     ...(() => {
       const shareExact =
@@ -404,14 +467,50 @@ async function handleGetResult(id: string, env: Env): Promise<Response> {
   return jsonResponse(rows[0]);
 }
 
-/** Percentile on a sorted numeric array (linear interpolation). */
-function percentile(sorted: number[], p: number): number | null {
-  if (sorted.length === 0) return null;
-  const idx = (sorted.length - 1) * p;
-  const lower = Math.floor(idx);
-  const upper = Math.ceil(idx);
-  if (lower === upper) return sorted[lower];
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (idx - lower);
+/** PATCH /v1/results/:id/provider — attach the "Who's your provider?" answer
+ *  after the test. Only the browser that ran the test (same client token) can do
+ *  this, and only for 2 hours. */
+async function handlePatchProvider(id: string, request: Request, env: Env): Promise<Response> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+    return jsonResponse({ error: 'Invalid result ID' }, 400);
+  }
+  let body: { clientToken?: unknown; provider?: ProviderAnswer };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!validClientToken(body.clientToken)) {
+    return jsonResponse({ error: 'clientToken is required' }, 422);
+  }
+  const provider = providerColumns(body.provider);
+  if (!provider) return jsonResponse({ error: 'provider.reported is required' }, 422);
+  if ('error' in provider) return jsonResponse({ error: provider.error }, 422);
+
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse({ error: 'Supabase not configured' }, 503);
+
+  const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const params = new URLSearchParams({
+    id: `eq.${id}`,
+    client_token_hash: `eq.${await sha256Hex(body.clientToken)}`,
+    created_at: `gte.${cutoff}`,
+    select: 'id',
+  });
+  const res = await supabase(`test_results?${params}`, {
+    method: 'PATCH',
+    body: JSON.stringify(provider),
+    headers: { Prefer: 'return=representation' },
+  });
+  if (!res.ok) {
+    console.error('Supabase provider patch error', res.status, await res.text());
+    return jsonResponse({ error: 'Failed to save provider' }, 502);
+  }
+  const rows = (await res.json()) as unknown[];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return jsonResponse({ error: 'Result not found, not yours, or too old to edit' }, 404);
+  }
+  return jsonResponse({ success: true });
 }
 
 function mean(values: number[]): number | null {
@@ -525,8 +624,77 @@ function aggregateTestResults(
   });
 }
 
+const PERIOD_DAYS: Record<string, number | null> = {
+  weekly: 7,
+  monthly: 28,
+  quarter: 90,
+  all: null,
+};
+
+/** GET /v1/aggregate?by=brand — rankings grouped by provider brand and
+ *  connection kind (broadband | mobile) instead of raw ASN.
+ *
+ *  Params: group=district|taluk|village (default district), period=weekly|
+ *  monthly|quarter|all (default monthly; taluk/village grouping defaults to all),
+ *  district, taluk, kind=broadband|mobile, brand=<brand key>. */
+async function handleBrandAggregate(url: URL, env: Env): Promise<Response> {
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse({ error: 'Supabase not configured' }, 503);
+
+  const groupParam = url.searchParams.get('group');
+  const grouping: PlaceGrouping =
+    groupParam === 'taluk' || groupParam === 'village' ? groupParam : 'district';
+  const period = url.searchParams.get('period') ?? (grouping === 'district' ? 'monthly' : 'all');
+  if (!(period in PERIOD_DAYS)) {
+    return jsonResponse({ error: 'period must be weekly, monthly, quarter or all' }, 422);
+  }
+  const kind = url.searchParams.get('kind');
+  if (kind && kind !== 'broadband' && kind !== 'mobile') {
+    return jsonResponse({ error: 'kind must be broadband or mobile' }, 422);
+  }
+
+  const baseColumns =
+    'district,taluk,isp_name,asn,connection_type,download_mbps,upload_mbps,latency_ms,jitter_ms,created_at';
+  const params = new URLSearchParams({
+    select: `${baseColumns},village,provider_reported,provider_reported_name`,
+    is_outlier: 'eq.false',
+    source: 'eq.netundo',
+    order: 'created_at.desc',
+    limit: period === 'weekly' || period === 'monthly' ? '5000' : '50000',
+  });
+  const days = PERIOD_DAYS[period];
+  if (days != null) {
+    params.set('created_at', `gte.${new Date(Date.now() - days * 86_400_000).toISOString()}`);
+  }
+  const district = url.searchParams.get('district');
+  const taluk = url.searchParams.get('taluk');
+  if (district) params.set('district', `eq.${district}`);
+  if (taluk) params.set('taluk', `eq.${taluk}`);
+
+  let res = await supabase(`test_results?${params}`);
+  if (res.status === 400) {
+    // Migration 011 not applied yet: fall back to the columns that exist.
+    params.set('select', baseColumns);
+    res = await supabase(`test_results?${params}`);
+  }
+  if (!res.ok) {
+    console.error('Supabase brand aggregate error', res.status);
+    return jsonResponse({ error: 'Failed to fetch aggregates' }, 502);
+  }
+  const rows = (await res.json()) as BrandTestRow[];
+  if (!Array.isArray(rows)) return jsonResponse({ error: 'Invalid aggregate response' }, 502);
+
+  return jsonResponse(
+    aggregateByBrand(rows, grouping, { brand: url.searchParams.get('brand'), kind }),
+    200,
+    { 'Cache-Control': 'public, max-age=120' },
+  );
+}
+
 /** GET /v1/aggregate */
 async function handleAggregate(url: URL, env: Env): Promise<Response> {
+  if (url.searchParams.get('by') === 'brand') return handleBrandAggregate(url, env);
+
   const supabase = makeSupabase(env);
   if (!supabase) {
     return jsonResponse(
@@ -811,6 +979,12 @@ export default {
     // POST /v1/feedback
     if (method === 'POST' && path === '/v1/feedback') {
       return handlePostFeedback(request, env);
+    }
+
+    // PATCH /v1/results/:id/provider
+    const providerMatch = path.match(/^\/v1\/results\/([^/]+)\/provider$/);
+    if (method === 'PATCH' && providerMatch) {
+      return handlePatchProvider(providerMatch[1], request, env);
     }
 
     // GET /v1/results/:id
