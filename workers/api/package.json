@@ -5,11 +5,16 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250620.0",
     "typescript": "^5.8.3",
+    "vitest": "3.2.4",
     "wrangler": "^4.19.0"
+  },
+  "dependencies": {
+    "@netundo/types": "workspace:*"
   }
 }

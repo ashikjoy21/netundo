@@ -9,4 +9,10 @@ compatibility_flags = ["nodejs_compat"]
 # zone_name = "netundo.in"
 
 [vars]
+# Outage detection: a provider is a "Likely outage" in a taluk once it gets
+# OUTAGE_MIN_REPORTS reports from distinct users within OUTAGE_WINDOW_MIN.
+OUTAGE_MIN_REPORTS = "3"
+OUTAGE_WINDOW_MIN = "30"
+# How far back the "Right now" section counts reports.
+RIGHT_NOW_WINDOW_MIN = "60"
 SUPABASE_URL = "https://poxwxxutfancmqguclse.supabase.co"

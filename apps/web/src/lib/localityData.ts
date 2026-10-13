@@ -4,6 +4,7 @@ import {
   type ScoredNetwork,
 } from './networkScore';
 import { findDistrict, findTaluk, slugify } from './slug';
+import { INDEX_MIN_TESTS } from './config';
 
 /**
  * Build-time data layer for locality (taluk) pages.
@@ -16,7 +17,7 @@ import { findDistrict, findTaluk, slugify } from './slug';
  */
 
 /** Minimum public samples before a page is allowed into the index + sitemap. */
-export const INDEX_SAMPLE_THRESHOLD = 5;
+export const INDEX_SAMPLE_THRESHOLD = INDEX_MIN_TESTS;
 
 export interface TalukAggRow extends AggregateRow {
   taluk?: string | null;
