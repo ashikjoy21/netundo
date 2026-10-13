@@ -7,6 +7,7 @@ import {
   siblingTaluks,
 } from '@/lib/slug';
 import {
+  getDistrictData,
   getTalukData,
   getTraiBenchmark,
   getMlabForTaluk,
@@ -23,6 +24,7 @@ import { IspTable } from '@/components/locality/IspTable';
 import { Faq } from '@/components/locality/Faq';
 import { VillageList, NearbyTaluks } from '@/components/locality/LinkList';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
+import { FallbackNotice } from '@/components/locality/FallbackNotice';
 
 interface PageProps {
   params: Promise<{ district: string; taluk: string }>;
@@ -65,6 +67,11 @@ export default async function TalukPage({ params }: PageProps) {
   const trai = await getTraiBenchmark();
   const mlab = await getMlabForTaluk(place.district, place.taluk);
 
+  // No tests from this taluk yet: show the district's numbers instead, clearly
+  // labelled, rather than empty tables.
+  const districtData = data.totalSamples === 0 ? await getDistrictData(district) : null;
+  const shown = districtData && districtData.totalSamples > 0 ? districtData : null;
+
   const crumbs: Crumb[] = [
     { label: 'Kerala', href: '/kerala' },
     { label: place.district, href: `/kerala/${district}` },
@@ -85,11 +92,31 @@ export default async function TalukPage({ params }: PageProps) {
         <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">{localizedIntro(prose)}</p>
       </header>
 
-      <SummaryCards broadband={data.broadband} mobile={data.mobile} placeName={place.taluk} />
+      {shown ? (
+        <FallbackNotice>
+          No netundo tests from {place.taluk} yet — showing <strong>{place.district} district</strong> results (
+          {shown.totalSamples} tests) until local data comes in.{' '}
+          <a href="/test" className="font-semibold underline">Run a test from {place.taluk}</a>
+        </FallbackNotice>
+      ) : data.totalSamples === 0 ? (
+        <FallbackNotice>
+          No netundo tests from {place.taluk} or {place.district} yet.
+          {mlab ? ' Independent M-Lab measurements are shown below for reference.' : ''}{' '}
+          <a href="/test" className="font-semibold underline">Be the first to test</a>
+        </FallbackNotice>
+      ) : null}
+
+      <SummaryCards
+        broadband={shown ? shown.broadband : data.broadband}
+        mobile={shown ? shown.mobile : data.mobile}
+        placeName={shown ? place.district : place.taluk}
+      />
 
       <section className="space-y-3">
-        <h2 className="text-base font-semibold text-gray-900">Best internet providers in {place.taluk}</h2>
-        <IspTable providers={data.providers} placeName={place.taluk} />
+        <h2 className="text-base font-semibold text-gray-900">
+          Best internet providers in {shown ? `${place.district} district` : place.taluk}
+        </h2>
+        <IspTable providers={shown ? shown.providers : data.providers} placeName={shown ? place.district : place.taluk} />
       </section>
 
       {mlab && <MlabBenchmark data={mlab} placeName={place.taluk} geoLevel="taluk" />}

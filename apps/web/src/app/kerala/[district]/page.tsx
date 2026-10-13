@@ -8,6 +8,7 @@ import { TraiBenchmark } from '@/components/locality/TraiBenchmark';
 import { MlabBenchmark } from '@/components/locality/MlabBenchmark';
 import { IspTable } from '@/components/locality/IspTable';
 import { SummaryCards } from '@/components/locality/SummaryCards';
+import { FallbackNotice } from '@/components/locality/FallbackNotice';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
 
 interface PageProps {
@@ -64,6 +65,14 @@ export default async function DistrictPage({ params }: PageProps) {
           {data.totalSamples} crowdsourced netundo speed tests. Pick an area to see local providers and speeds.
         </p>
       </header>
+
+      {data.totalSamples === 0 && (
+        <FallbackNotice>
+          No netundo tests from {place.district} yet.
+          {mlab ? ' Independent M-Lab measurements are shown below for reference.' : ''}{' '}
+          <a href="/test" className="font-semibold underline">Be the first to test</a>
+        </FallbackNotice>
+      )}
 
       <SummaryCards broadband={data.broadband} mobile={data.mobile} placeName={place.district} />
 

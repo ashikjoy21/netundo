@@ -38,9 +38,16 @@ export function MlabBenchmark({
         <h2 className="flex items-center gap-2 text-base font-semibold text-gray-900">
           <Globe2 className="h-4 w-4 text-gray-400" />
           Independent measurements (M-Lab)
+          {data.periodLabel && (
+            <span className="rounded-full bg-gray-900 px-2 py-0.5 text-xs font-bold text-white">{data.periodLabel} data</span>
+          )}
         </h2>
-        <p className="mt-0.5 text-xs text-gray-400">
+        <p className="mt-0.5 text-xs text-gray-500">
           Cross-check from {descriptor} — an external public dataset, separate from netundo&apos;s own results.
+        </p>
+        <p className="mt-1 text-xs text-gray-600">
+          <strong>Why the numbers differ:</strong> this is {data.periodLabel ? `${data.periodLabel} ` : ''}data from a different test
+          (single-stream NDT, located by IP), so it usually reads lower than netundo&apos;s recent multi-stream tests.
         </p>
       </div>
 
