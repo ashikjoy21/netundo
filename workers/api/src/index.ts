@@ -11,6 +11,9 @@
  *   POST /v1/reports
  *   GET  /v1/status
  *   GET  /v1/outages/active
+ *   POST /v1/comments
+ *   GET  /v1/comments
+ *   POST /v1/comments/:id/report
  *   POST  /v1/operator/updates        (Bearer operator token)
  *   PATCH /v1/operator/updates/:id    (Bearer operator token)
  *   GET   /v1/operator/updates        (Bearer operator token)
@@ -25,6 +28,7 @@ import { aggregateByBrand, percentile, type BrandTestRow, type PlaceGrouping } f
 import { locateTaluk } from './locate';
 import { buildStatus, isKnownDistrict, isKnownTaluk, validateReport, type EventRow, type ReportPayload, type ReportRow } from './outages';
 import { dailyIpHash, tokenHash } from './privacy';
+import { validateComment } from './comments';
 import {
   isVisibleUpdate,
   parseBearer,
@@ -1242,6 +1246,123 @@ async function handleActiveOutages(env: Env): Promise<Response> {
   );
 }
 
+/** POST /v1/comments — short provider review on an area page. */
+async function handlePostComment(request: Request, env: Env): Promise<Response> {
+  const body = await readJsonObject(request);
+  if (!body) return jsonResponse({ error: 'Body must be a JSON object', field: 'body' }, 400);
+  const v = validateComment(body);
+  if (!v.ok) return jsonResponse({ error: v.error, field: v.field }, 422);
+  const c = v.comment;
+
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse({ error: 'Supabase not configured' }, 503);
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+
+  const res = await supabase('rpc/submit_area_comment', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_district: c.district,
+      p_taluk: c.taluk,
+      p_village: c.village,
+      p_brand_key: c.brandKey,
+      p_provider_name: c.providerName,
+      p_kind: c.kind,
+      p_body: c.body,
+      p_ip_hash: await dailyIpHash(ip, env),
+      p_token_hash: await tokenHash(c.clientToken, env),
+    }),
+  });
+  if (!res.ok) {
+    console.error('submit_area_comment error', res.status, await res.text());
+    return jsonResponse({ error: 'Failed to save comment' }, 502);
+  }
+  const out = (await res.json()) as { id?: string; error?: string };
+  if (out.error === 'rate_limited') {
+    return jsonResponse({ error: 'You’ve posted a few comments already — please try again later' }, 429);
+  }
+  return jsonResponse({ success: true, id: out.id }, 201);
+}
+
+/** GET /v1/comments?district=&taluk=[&village=][&brand=] — visible comments. */
+async function handleGetComments(url: URL, env: Env): Promise<Response> {
+  const district = url.searchParams.get('district') ?? '';
+  const taluk = url.searchParams.get('taluk') ?? '';
+  if (!isKnownDistrict(district) || !isKnownTaluk(district, taluk)) {
+    return jsonResponse({ error: 'Unknown district/taluk', field: 'taluk' }, 422);
+  }
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse({ error: 'Supabase not configured' }, 503);
+
+  const params = new URLSearchParams({
+    select: 'id,created_at,village,brand_key,provider_name,kind,body',
+    district: `eq.${district}`,
+    taluk: `eq.${taluk}`,
+    hidden: 'eq.false',
+    order: 'created_at.desc',
+    limit: '50',
+  });
+  const village = url.searchParams.get('village');
+  const brand = url.searchParams.get('brand');
+  if (village) params.set('village', `eq.${village}`);
+  if (brand) params.set('brand_key', `eq.${brand}`);
+
+  const res = await supabase(`area_comments?${params}`);
+  if (!res.ok) return jsonResponse({ error: 'Failed to fetch comments' }, 502);
+  const rows = (await res.json()) as Array<{
+    id: string;
+    created_at: string;
+    village: string | null;
+    brand_key: string;
+    provider_name: string | null;
+    kind: string;
+    body: string;
+  }>;
+  return jsonResponse(
+    {
+      comments: rows.map((r) => ({
+        id: r.id,
+        at: r.created_at,
+        village: r.village,
+        brand_key: r.brand_key,
+        provider: displayNameForKey(r.brand_key, r.provider_name),
+        kind: r.kind,
+        body: r.body,
+      })),
+    },
+    200,
+    { 'Cache-Control': 'public, max-age=60' },
+  );
+}
+
+/** POST /v1/comments/:id/report — flag a comment (auto-hidden at 3 flags). */
+async function handleReportComment(id: string, request: Request, env: Env): Promise<Response> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return jsonResponse({ error: 'Invalid comment id', field: 'id' }, 400);
+  const body = await readJsonObject(request);
+  const token = typeof body?.clientToken === 'string' ? body.clientToken : '';
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return jsonResponse({ error: 'clientToken is required', field: 'clientToken' }, 422);
+  const reason = typeof body?.reason === 'string' ? body.reason.trim().slice(0, 200) || null : null;
+
+  const supabase = makeSupabase(env);
+  if (!supabase) return jsonResponse({ error: 'Supabase not configured' }, 503);
+  const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+  const res = await supabase('rpc/report_area_comment', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_comment_id: id,
+      p_token_hash: await tokenHash(token, env),
+      p_ip_hash: await dailyIpHash(ip, env),
+      p_reason: reason,
+    }),
+  });
+  if (!res.ok) {
+    console.error('report_area_comment error', res.status, await res.text());
+    return jsonResponse({ error: 'Failed to report comment' }, 502);
+  }
+  const out = (await res.json()) as { error?: string };
+  if (out.error === 'not_found') return jsonResponse({ error: 'Comment not found', field: 'id' }, 404);
+  return jsonResponse({ success: true });
+}
+
 /** Close outage events with no reports for a full detection window. */
 async function closeStaleOutages(env: Env): Promise<void> {
   const supabase = makeSupabase(env);
@@ -1511,6 +1632,16 @@ export default {
     }
     if (method === 'GET' && path === '/v1/outages/active') {
       return handleActiveOutages(env);
+    }
+
+    // Community comments
+    if (path === '/v1/comments') {
+      if (method === 'POST') return handlePostComment(request, env);
+      if (method === 'GET') return handleGetComments(url, env);
+    }
+    const commentReportMatch = path.match(/^\/v1\/comments\/([^/]+)\/report$/);
+    if (method === 'POST' && commentReportMatch) {
+      return handleReportComment(commentReportMatch[1], request, env);
     }
 
     // Operator updates API

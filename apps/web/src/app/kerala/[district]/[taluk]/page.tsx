@@ -25,6 +25,7 @@ import { Faq } from '@/components/locality/Faq';
 import { VillageList, NearbyTaluks } from '@/components/locality/LinkList';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
 import { RightNow } from '@/components/outage/RightNow';
+import { CommunityComments } from '@/components/outage/CommunityComments';
 import { FallbackNotice } from '@/components/locality/FallbackNotice';
 
 interface PageProps {
@@ -121,6 +122,8 @@ export default async function TalukPage({ params }: PageProps) {
         </h2>
         <IspTable providers={shown ? shown.providers : data.providers} placeName={shown ? place.district : place.taluk} />
       </section>
+
+      <CommunityComments district={place.district} taluk={place.taluk} />
 
       {mlab && <MlabBenchmark data={mlab} placeName={place.taluk} geoLevel="taluk" />}
 

@@ -20,6 +20,7 @@ import { Faq } from '@/components/locality/Faq';
 import { VillageList } from '@/components/locality/LinkList';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
 import { RightNow } from '@/components/outage/RightNow';
+import { CommunityComments } from '@/components/outage/CommunityComments';
 import { FallbackNotice } from '@/components/locality/FallbackNotice';
 
 interface PageProps {
@@ -124,6 +125,8 @@ export default async function VillagePage({ params }: PageProps) {
         </h2>
         <IspTable providers={shown.providers} placeName={fallback ? fallback.label : data.village} />
       </section>
+
+      <CommunityComments district={data.district} taluk={data.taluk} village={data.village} />
 
       {mlab && <MlabBenchmark data={mlab} placeName={data.taluk} geoLevel="taluk" />}
 
