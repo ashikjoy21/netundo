@@ -9,6 +9,8 @@ import { NetworkQuality } from './NetworkQuality';
 import { BoxPlotRow, LatencyBoxPlotRow } from './BoxPlot';
 import { DistrictPicker, type ConnectionType, type GeoCoords } from './DistrictPicker';
 import { AreaRanking } from './AreaRanking';
+import { ProviderQuestion } from './ProviderQuestion';
+import { getClientToken } from '@/lib/clientPrefs';
 import {
   formatMbps,
   formatMs,
@@ -36,6 +38,7 @@ export function SpeedTest() {
   const [localArea, setLocalArea] = useState('');
   const [planMbps, setPlanMbps] = useState<number | null>(null);
   const [resultSubmitted, setResultSubmitted] = useState(false);
+  const [resultId, setResultId] = useState<string | null>(null);
 
   const {
     state: { status, summary, scores, downloadPoints, uploadPoints,
@@ -97,6 +100,7 @@ export function SpeedTest() {
     setPlanMbps(plan);
     setAppState('testing');
     setResultSubmitted(false);
+    setResultId(null);
     await start();
   };
 
@@ -121,7 +125,7 @@ export function SpeedTest() {
         connection?: { effectiveType?: string };
       };
 
-      await fetch(`${apiBase}/v1/results`, {
+      const res = await fetch(`${apiBase}/v1/results`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -133,12 +137,17 @@ export function SpeedTest() {
             userAgent: navigator.userAgent,
           },
           location: coords
-            ? { district, taluk: taluk || undefined, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM }
-            : { district, taluk: taluk || undefined },
+            ? { district, taluk: taluk || undefined, village: localArea || undefined, lat: coords.lat, lng: coords.lng, accuracyM: coords.accuracyM }
+            : { district, taluk: taluk || undefined, village: localArea || undefined },
           plan: planMbps ? { advertisedMbps: planMbps } : undefined,
+          clientToken: getClientToken(),
           consent: { sharePublicly: true, shareExactLocation: !!coords },
         }),
       });
+      if (res.ok) {
+        const body = (await res.json()) as { id?: string };
+        if (body.id) setResultId(body.id);
+      }
     } catch {
       // Non-critical — don't surface to user
     }
@@ -147,6 +156,7 @@ export function SpeedTest() {
   const handleRetest = async () => {
     setAppState('testing');
     setResultSubmitted(false);
+    setResultId(null);
     await restart();
   };
 
@@ -282,6 +292,11 @@ export function SpeedTest() {
           )}
         </div>
       </section>
+
+      {/* ── Who's your provider? ── */}
+      {isDone && resultId && (
+        <ProviderQuestion resultId={resultId} asn={asn} ispName={ispName} connectionType={connType} />
+      )}
 
       {/* ── Plan vs reality ── */}
       {isDone && planMbps && typeof summary.download === 'number' && (
