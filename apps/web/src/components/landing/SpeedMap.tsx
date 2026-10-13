@@ -11,13 +11,11 @@ const SpeedMapCanvas = dynamic(() => import('./SpeedMapCanvas'), {
   loading: () => <div className="h-full w-full animate-pulse bg-gray-100" />,
 });
 
-type ConnFilter = 'all' | 'mobile' | 'wifi' | 'wired';
+type ConnFilter = ConnectionKind;
 
 const FILTERS: { id: ConnFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'wifi', label: 'Wi-Fi' },
-  { id: 'mobile', label: 'Mobile' },
-  { id: 'wired', label: 'Wired' },
+  { id: 'broadband', label: 'Home broadband' },
+  { id: 'mobile', label: 'Mobile data' },
 ];
 
 interface SpeedMapProps {
@@ -37,7 +35,7 @@ export function SpeedMap({
 }: SpeedMapProps = {}) {
   const [points, setPoints] = useState<SpeedPoint[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<ConnFilter>('all');
+  const [filter, setFilter] = useState<ConnFilter>('broadband');
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
   const [locating, setLocating] = useState(false);
 
@@ -56,12 +54,12 @@ export function SpeedMap({
 
   const filtered = useMemo(() => {
     let result = points;
-    const conn = hideConnectionFilters ? connectionType : filter;
-    if (conn && conn !== 'all') {
-      result = result.filter((p) => p.connection_type === conn);
+    if (hideConnectionFilters && connectionType) {
+      result = result.filter((p) => p.connection_type === connectionType);
     }
-    if (kind) {
-      result = result.filter((p) => kindForConnectionType(p.connection_type ?? '') === kind);
+    const activeKind = hideConnectionFilters ? kind : filter;
+    if (activeKind) {
+      result = result.filter((p) => kindForConnectionType(p.connection_type ?? '') === activeKind);
     }
     if (district) {
       result = result.filter((p) => p.district === district);
