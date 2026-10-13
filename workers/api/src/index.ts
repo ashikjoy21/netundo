@@ -11,17 +11,31 @@
  *   POST /v1/reports
  *   GET  /v1/status
  *   GET  /v1/outages/active
+ *   POST  /v1/operator/updates        (Bearer operator token)
+ *   PATCH /v1/operator/updates/:id    (Bearer operator token)
+ *   GET   /v1/operator/updates        (Bearer operator token)
  *
  * Cron (every 5 min): closes outage events that have stopped getting reports.
  *   POST /v1/feedback
  *   GET  /v1/health
  */
 
-import { isKnownProviderSlug } from '@netundo/types';
+import { displayNameForKey, isKnownProviderSlug } from '@netundo/types';
 import { aggregateByBrand, percentile, type BrandTestRow, type PlaceGrouping } from './aggregate';
 import { locateTaluk } from './locate';
 import { buildStatus, isKnownDistrict, isKnownTaluk, validateReport, type EventRow, type ReportPayload, type ReportRow } from './outages';
 import { dailyIpHash, tokenHash } from './privacy';
+import {
+  isVisibleUpdate,
+  parseBearer,
+  publicUpdate,
+  validateCreate,
+  validatePatch,
+  type AreaInput,
+  type OperatorRow,
+  type UpdateFields,
+  type UpdateRow,
+} from './operator';
 
 // ---------------------------------------------------------------------------
 // Environment bindings
@@ -75,7 +89,7 @@ const KERALA_DISTRICTS: Set<string> = new Set([
 const CORS_HEADERS: HeadersInit = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Max-Age': '86400',
 };
 
@@ -799,12 +813,244 @@ function handleLocate(url: URL): Response {
   });
 }
 
-/** Active operator updates for an area. Filled in with the operator API. */
+const UPDATE_SELECT =
+  'id,brand_key,kind,status,message,eta,external_ref,created_at,updated_at,resolved_at,operators(name),operator_update_areas(district,taluk)';
+
+/** Active operator updates covering an area (a taluk, or anywhere in a district
+ *  when taluk is null). Errors are swallowed: "Right now" must still render. */
 async function fetchActiveOperatorUpdates(
-  _env: Env,
-  _area: { district: string; taluk: string | null },
-): Promise<unknown[]> {
-  return [];
+  env: Env,
+  area: { district: string; taluk: string | null },
+): Promise<ReturnType<typeof publicUpdate>[]> {
+  const supabase = makeSupabase(env);
+  if (!supabase) return [];
+  try {
+    const areaParams = new URLSearchParams({ select: 'update_id', district: `eq.${area.district}`, limit: '200' });
+    if (area.taluk) areaParams.set('or', `(taluk.is.null,taluk.eq."${area.taluk}")`);
+    const areasRes = await supabase(`operator_update_areas?${areaParams}`);
+    if (!areasRes.ok) return [];
+    const ids = [...new Set(((await areasRes.json()) as Array<{ update_id: string }>).map((r) => r.update_id))];
+    if (!ids.length) return [];
+
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const res = await supabase(
+      `operator_updates?${new URLSearchParams({
+        select: UPDATE_SELECT,
+        id: `in.(${ids.join(',')})`,
+        updated_at: `gte.${since}`,
+        order: 'updated_at.desc',
+        limit: '20',
+      })}`,
+    );
+    if (!res.ok) return [];
+    const now = new Date();
+    return ((await res.json()) as UpdateRow[])
+      .filter((u) => isVisibleUpdate(u, now))
+      .map((u) => publicUpdate(u, displayNameForKey(u.brand_key)));
+  } catch (err) {
+    console.error('operator updates fetch failed', err);
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Operator API (authenticated with per-operator bearer tokens)
+// ---------------------------------------------------------------------------
+
+// Best-effort per-isolate limit; operators are few and authenticated.
+const operatorHits = new Map<string, { count: number; windowStart: number }>();
+const OPERATOR_LIMIT_PER_MIN = 60;
+
+function operatorRateLimited(operatorId: string): boolean {
+  const now = Date.now();
+  const entry = operatorHits.get(operatorId);
+  if (!entry || now - entry.windowStart > 60_000) {
+    operatorHits.set(operatorId, { count: 1, windowStart: now });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > OPERATOR_LIMIT_PER_MIN;
+}
+
+async function authenticateOperator(
+  request: Request,
+  env: Env,
+): Promise<{ operator: OperatorRow } | { response: Response }> {
+  const token = parseBearer(request.headers.get('Authorization'));
+  if (!token) {
+    return { response: jsonResponse({ error: 'Missing or malformed bearer token', field: 'Authorization' }, 401, { 'WWW-Authenticate': 'Bearer' }) };
+  }
+  const supabase = makeSupabase(env);
+  if (!supabase) return { response: jsonResponse({ error: 'Supabase not configured' }, 503) };
+
+  const res = await supabase(
+    `operators?${new URLSearchParams({
+      select: 'id,name,brand_key,allowed_districts,active',
+      token_hash: `eq.${await sha256Hex(token)}`,
+      active: 'eq.true',
+      limit: '1',
+    })}`,
+  );
+  if (!res.ok) return { response: jsonResponse({ error: 'Auth lookup failed' }, 502) };
+  const [operator] = (await res.json()) as OperatorRow[];
+  if (!operator) {
+    return { response: jsonResponse({ error: 'Invalid or revoked token', field: 'Authorization' }, 401, { 'WWW-Authenticate': 'Bearer' }) };
+  }
+  if (operatorRateLimited(operator.id)) {
+    return { response: jsonResponse({ error: `Rate limit: ${OPERATOR_LIMIT_PER_MIN} requests per minute` }, 429) };
+  }
+  return { operator };
+}
+
+async function readJsonObject(request: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const body = await request.json();
+    return body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function updateColumns(fields: UpdateFields): Record<string, unknown> {
+  const cols: Record<string, unknown> = {};
+  if (fields.status !== undefined) {
+    cols.status = fields.status;
+    cols.resolved_at = fields.status === 'restored' ? new Date().toISOString() : null;
+  }
+  if (fields.message !== undefined) cols.message = fields.message;
+  if (fields.eta !== undefined) cols.eta = fields.eta;
+  if (fields.kind !== undefined) cols.kind = fields.kind;
+  if (fields.externalRef !== undefined) cols.external_ref = fields.externalRef;
+  return cols;
+}
+
+async function replaceAreas(
+  supabase: NonNullable<ReturnType<typeof makeSupabase>>,
+  updateId: string,
+  areas: AreaInput[],
+): Promise<boolean> {
+  const del = await supabase(`operator_update_areas?update_id=eq.${updateId}`, { method: 'DELETE' });
+  if (!del.ok) return false;
+  const ins = await supabase('operator_update_areas', {
+    method: 'POST',
+    body: JSON.stringify(areas.map((a) => ({ update_id: updateId, district: a.district, taluk: a.taluk }))),
+    headers: { Prefer: 'return=minimal' },
+  });
+  return ins.ok;
+}
+
+async function loadOwnUpdate(
+  supabase: NonNullable<ReturnType<typeof makeSupabase>>,
+  operatorId: string,
+  filter: Record<string, string>,
+): Promise<UpdateRow | null> {
+  const res = await supabase(
+    `operator_updates?${new URLSearchParams({ select: UPDATE_SELECT, operator_id: `eq.${operatorId}`, limit: '1', ...filter })}`,
+  );
+  if (!res.ok) return null;
+  const [row] = (await res.json()) as UpdateRow[];
+  return row ?? null;
+}
+
+async function patchUpdate(
+  supabase: NonNullable<ReturnType<typeof makeSupabase>>,
+  operator: OperatorRow,
+  updateId: string,
+  fields: UpdateFields,
+): Promise<Response> {
+  const cols = { ...updateColumns(fields), updated_at: new Date().toISOString() };
+  const res = await supabase(`operator_updates?id=eq.${updateId}&operator_id=eq.${operator.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(cols),
+    headers: { Prefer: 'return=minimal' },
+  });
+  if (!res.ok) {
+    console.error('operator update patch error', res.status, await res.text());
+    return jsonResponse({ error: 'Failed to update' }, 502);
+  }
+  if (fields.areas && !(await replaceAreas(supabase, updateId, fields.areas))) {
+    return jsonResponse({ error: 'Update saved but areas failed to save; retry with the same areas' }, 502);
+  }
+  const row = await loadOwnUpdate(supabase, operator.id, { id: `eq.${updateId}` });
+  return jsonResponse({ update: row && publicUpdate(row, displayNameForKey(operator.brand_key)) });
+}
+
+/** POST /v1/operator/updates */
+async function handleCreateOperatorUpdate(request: Request, env: Env): Promise<Response> {
+  const auth = await authenticateOperator(request, env);
+  if ('response' in auth) return auth.response;
+  const { operator } = auth;
+
+  const body = await readJsonObject(request);
+  if (!body) return jsonResponse({ error: 'Body must be a JSON object', field: 'body' }, 400);
+  const v = validateCreate(body, operator);
+  if (!v.ok) return jsonResponse({ error: v.error, field: v.field }, 422);
+
+  const supabase = makeSupabase(env)!;
+
+  // Idempotent retries: the same external_ref updates the existing record.
+  if (v.fields.externalRef) {
+    const existing = await loadOwnUpdate(supabase, operator.id, { external_ref: `eq.${v.fields.externalRef}` });
+    if (existing) return patchUpdate(supabase, operator, existing.id, v.fields);
+  }
+
+  const insertRes = await supabase('operator_updates', {
+    method: 'POST',
+    body: JSON.stringify({ operator_id: operator.id, brand_key: operator.brand_key, ...updateColumns(v.fields) }),
+    headers: { Prefer: 'return=representation' },
+  });
+  if (!insertRes.ok) {
+    console.error('operator update insert error', insertRes.status, await insertRes.text());
+    return jsonResponse({ error: 'Failed to create update' }, 502);
+  }
+  const [created] = (await insertRes.json()) as Array<{ id: string }>;
+  if (!(await replaceAreas(supabase, created.id, v.fields.areas ?? []))) {
+    await supabase(`operator_updates?id=eq.${created.id}`, { method: 'DELETE' });
+    return jsonResponse({ error: 'Failed to save areas' }, 502);
+  }
+  const row = await loadOwnUpdate(supabase, operator.id, { id: `eq.${created.id}` });
+  return jsonResponse({ update: row && publicUpdate(row, displayNameForKey(operator.brand_key)) }, 201);
+}
+
+/** PATCH /v1/operator/updates/:id */
+async function handlePatchOperatorUpdate(id: string, request: Request, env: Env): Promise<Response> {
+  const auth = await authenticateOperator(request, env);
+  if ('response' in auth) return auth.response;
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return jsonResponse({ error: 'Invalid update id', field: 'id' }, 400);
+
+  const body = await readJsonObject(request);
+  if (!body) return jsonResponse({ error: 'Body must be a JSON object', field: 'body' }, 400);
+  const v = validatePatch(body, auth.operator);
+  if (!v.ok) return jsonResponse({ error: v.error, field: v.field }, 422);
+
+  const supabase = makeSupabase(env)!;
+  const existing = await loadOwnUpdate(supabase, auth.operator.id, { id: `eq.${id}` });
+  if (!existing) return jsonResponse({ error: 'Update not found', field: 'id' }, 404);
+  return patchUpdate(supabase, auth.operator, id, v.fields);
+}
+
+/** GET /v1/operator/updates[?active=1] — this operator's own updates. */
+async function handleListOperatorUpdates(url: URL, request: Request, env: Env): Promise<Response> {
+  const auth = await authenticateOperator(request, env);
+  if ('response' in auth) return auth.response;
+  const supabase = makeSupabase(env)!;
+  const res = await supabase(
+    `operator_updates?${new URLSearchParams({
+      select: UPDATE_SELECT,
+      operator_id: `eq.${auth.operator.id}`,
+      order: 'updated_at.desc',
+      limit: '100',
+    })}`,
+  );
+  if (!res.ok) return jsonResponse({ error: 'Failed to list updates' }, 502);
+  const now = new Date();
+  let rows = (await res.json()) as UpdateRow[];
+  if (url.searchParams.get('active') === '1') rows = rows.filter((u) => isVisibleUpdate(u, now));
+  const name = displayNameForKey(auth.operator.brand_key);
+  return jsonResponse({
+    operator: { name: auth.operator.name, brand_key: auth.operator.brand_key },
+    updates: rows.map((u) => ({ ...publicUpdate(u, name), external_ref: u.external_ref ?? null, visible: isVisibleUpdate(u, now) })),
+  });
 }
 
 /** POST /v1/reports — "Net illa?" outage report. No login; deduped and
@@ -1265,6 +1511,16 @@ export default {
     }
     if (method === 'GET' && path === '/v1/outages/active') {
       return handleActiveOutages(env);
+    }
+
+    // Operator updates API
+    if (path === '/v1/operator/updates') {
+      if (method === 'POST') return handleCreateOperatorUpdate(request, env);
+      if (method === 'GET') return handleListOperatorUpdates(url, request, env);
+    }
+    const opUpdateMatch = path.match(/^\/v1\/operator\/updates\/([^/]+)$/);
+    if (method === 'PATCH' && opUpdateMatch) {
+      return handlePatchOperatorUpdate(opUpdateMatch[1], request, env);
     }
 
     // GET /v1/points
