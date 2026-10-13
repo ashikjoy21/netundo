@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { Trophy, TrendingUp, ArrowRight } from 'lucide-react';
+import { resolveProvider } from '@netundo/types';
 import {
   compareRankedNetworks,
   scoreNetwork,
-  formatConnectionType,
+  formatKind,
   type AggregateRow,
   type ScoredNetwork,
 } from '@/lib/networkScore';
+import { fetchBrandAggregates } from '@/lib/api';
 
 interface Props {
   district: string;
@@ -24,23 +26,20 @@ export function AreaRanking({ district, connectionType, asn, ispName }: Props) {
   const [rows, setRows] = useState<AggregateRow[] | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // The user's own network, resolved the same way the rankings are.
+  const mineProvider = resolveProvider({ asn, ispOrg: ispName, connectionType });
+  const kind = mineProvider.kind;
+
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
-    if (!apiBase || !district) {
+    if (!district) {
       setLoading(false);
       return;
     }
-
-    const params = new URLSearchParams({ period: 'monthly', district });
-    if (connectionType) params.set('connection_type', connectionType);
-
     setLoading(true);
-    fetch(`${apiBase}/v1/aggregate?${params}`)
-      .then((r) => r.json())
-      .then((data: AggregateRow[]) => setRows(Array.isArray(data) ? data : []))
-      .catch(() => setRows([]))
+    fetchBrandAggregates({ period: 'monthly', district, kind })
+      .then(setRows)
       .finally(() => setLoading(false));
-  }, [district, connectionType]);
+  }, [district, kind]);
 
   if (loading) {
     return (
@@ -55,7 +54,7 @@ export function AreaRanking({ district, connectionType, asn, ispName }: Props) {
     .map((row) => scoreNetwork(row, 'overall'))
     .sort(compareRankedNetworks);
 
-  const connLabel = formatConnectionType(connectionType);
+  const connLabel = formatKind(kind).toLowerCase();
 
   // Too little data to rank honestly — invite the user to seed the area instead.
   if (ranked.length < MIN_NETWORKS) {
@@ -85,9 +84,7 @@ export function AreaRanking({ district, connectionType, asn, ispName }: Props) {
     );
   }
 
-  const index = ranked.findIndex((n) =>
-    asn != null ? n.asn === asn : ispName != null && n.name === ispName,
-  );
+  const index = ranked.findIndex((n) => n.brandKey === mineProvider.brandKey);
   const mine = index >= 0 ? ranked[index] : null;
   const rank = index >= 0 ? index + 1 : null;
   const total = ranked.length;

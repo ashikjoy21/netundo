@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { LocateFixed, MapPinned, Loader2 } from 'lucide-react';
 import type { SpeedPoint } from './SpeedMapCanvas';
+import { kindForConnectionType, type ConnectionKind } from '@/lib/networkScore';
 
 const SpeedMapCanvas = dynamic(() => import('./SpeedMapCanvas'), {
   ssr: false,
@@ -22,12 +23,15 @@ const FILTERS: { id: ConnFilter; label: string }[] = [
 interface SpeedMapProps {
   /** When set, connection filtering is controlled by the parent (e.g. Kerala page dropdowns). */
   connectionType?: string;
+  /** Filter pins to home broadband (Wi-Fi + wired) or mobile data. */
+  kind?: ConnectionKind;
   district?: string;
   hideConnectionFilters?: boolean;
 }
 
 export function SpeedMap({
   connectionType = '',
+  kind,
   district = '',
   hideConnectionFilters = false,
 }: SpeedMapProps = {}) {
@@ -56,11 +60,14 @@ export function SpeedMap({
     if (conn && conn !== 'all') {
       result = result.filter((p) => p.connection_type === conn);
     }
+    if (kind) {
+      result = result.filter((p) => kindForConnectionType(p.connection_type ?? '') === kind);
+    }
     if (district) {
       result = result.filter((p) => p.district === district);
     }
     return result;
-  }, [points, filter, connectionType, district, hideConnectionFilters]);
+  }, [points, filter, connectionType, kind, district, hideConnectionFilters]);
 
   const locateMe = () => {
     if (!navigator.geolocation) return;

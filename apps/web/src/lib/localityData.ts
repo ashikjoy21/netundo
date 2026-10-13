@@ -7,20 +7,23 @@ import { findDistrict, findTaluk, slugify } from './slug';
 import { INDEX_MIN_TESTS } from './config';
 
 /**
- * Build-time data layer for locality (taluk) pages.
+ * Build-time data layer for locality (district / taluk / village) pages.
  *
- * A single request to `/v1/aggregate?group=taluk` snapshots every taluk's
- * results; the fetch is memoized so all ~75 statically-generated pages share
- * one network round-trip during `next build`. When the API is unreachable (e.g.
- * a local build without NEXT_PUBLIC_API_WORKER_URL set), we degrade gracefully:
- * every page renders as "needs data" and is marked noindex.
+ * A single request to `/v1/aggregate?by=brand&group=village` snapshots every
+ * place's results grouped by provider brand and connection kind; the fetch is
+ * memoized so every statically-generated page shares one network round-trip
+ * during `next build`. When the API is unreachable (e.g. a local build without
+ * NEXT_PUBLIC_API_WORKER_URL set), we degrade gracefully: every page renders as
+ * "needs data" and is marked noindex.
  */
 
 /** Minimum public samples before a page is allowed into the index + sitemap. */
 export const INDEX_SAMPLE_THRESHOLD = INDEX_MIN_TESTS;
 
-export interface TalukAggRow extends AggregateRow {
-  taluk?: string | null;
+/** Aggregate row with its place normalised to canonical taluk/village names. */
+export interface AreaAggRow extends AggregateRow {
+  taluk: string | null;
+  village: string | null;
 }
 
 export interface MetricSummary {
@@ -28,6 +31,11 @@ export interface MetricSummary {
   downloadMbps: number | null;
   uploadMbps: number | null;
   latencyMs: number | null;
+}
+
+export interface ProvidersByKind {
+  broadband: ScoredNetwork[];
+  mobile: ScoredNetwork[];
 }
 
 export interface TalukData {
@@ -39,7 +47,7 @@ export interface TalukData {
   totalSamples: number;
   broadband: MetricSummary;
   mobile: MetricSummary;
-  topIsps: ScoredNetwork[];
+  providers: ProvidersByKind;
   indexable: boolean;
 }
 
@@ -49,10 +57,18 @@ export function canonicalTalukName(raw: string): string {
   return raw.split('/')[0].trim();
 }
 
-let cachedRows: Promise<TalukAggRow[]> | null = null;
+/** Split a legacy "Taluk / Village" value into its parts. */
+function normalizePlace(row: AggregateRow): AreaAggRow {
+  const raw = row.taluk ?? null;
+  if (!raw) return { ...row, taluk: null, village: row.village ?? null };
+  const [taluk, legacyVillage] = raw.split('/').map((part) => part.trim());
+  return { ...row, taluk: taluk || null, village: row.village ?? (legacyVillage || null) };
+}
 
-/** Memoized, build-time fetch of every taluk aggregate row. */
-export async function getAllTalukAggregates(): Promise<TalukAggRow[]> {
+let cachedRows: Promise<AreaAggRow[]> | null = null;
+
+/** Memoized, build-time fetch of every place's brand aggregates (all-time). */
+export async function getAllAreaAggregates(): Promise<AreaAggRow[]> {
   if (cachedRows) return cachedRows;
 
   const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
@@ -61,12 +77,36 @@ export async function getAllTalukAggregates(): Promise<TalukAggRow[]> {
     return cachedRows;
   }
 
-  cachedRows = fetch(`${apiBase}/v1/aggregate?group=taluk`)
-    .then((r) => (r.ok ? (r.json() as Promise<TalukAggRow[]>) : []))
-    .then((rows) => (Array.isArray(rows) ? rows : []))
+  cachedRows = fetch(`${apiBase}/v1/aggregate?by=brand&group=village&period=all`)
+    .then((r) => (r.ok ? (r.json() as Promise<AggregateRow[]>) : []))
+    .then((rows) => (Array.isArray(rows) ? rows.map(normalizePlace) : []))
     .catch(() => []);
 
   return cachedRows;
+}
+
+/** Rows for a district, optionally narrowed to a taluk (and village). Matching
+ *  is by slug so spelling/case drift in stored names still lines up. */
+export async function getAreaRows(
+  district: string,
+  talukSlug?: string,
+  villageSlug?: string,
+): Promise<AreaAggRow[]> {
+  const rows = await getAllAreaAggregates();
+  return rows.filter(
+    (r) =>
+      r.district === district &&
+      (talukSlug == null || (r.taluk != null && slugify(r.taluk) === talukSlug)) &&
+      (villageSlug == null || (r.village != null && slugify(r.village) === villageSlug)),
+  );
+}
+
+/** Ranked providers for each kind. Broadband and mobile are never mixed. */
+export function providersByKind(rows: AggregateRow[], limit = 8): ProvidersByKind {
+  return {
+    broadband: groupIspScores(rows.filter((r) => r.kind === 'broadband'), 'overall').slice(0, limit),
+    mobile: groupIspScores(rows.filter((r) => r.kind === 'mobile'), 'overall').slice(0, limit),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -340,18 +380,8 @@ export async function getTalukData(
   const place = findTaluk(districtSlug, talukSlug);
   if (!place) return null;
 
-  const allRows = await getAllTalukAggregates();
-  const rows = allRows.filter(
-    (r) =>
-      r.district === place.district &&
-      r.taluk != null &&
-      slugify(canonicalTalukName(r.taluk)) === place.talukSlug,
-  );
-
-  const broadband = summarize(rows.filter((r) => r.connection_type === 'wifi' || r.connection_type === 'wired'));
-  const mobile = summarize(rows.filter((r) => r.connection_type === 'mobile'));
+  const rows = await getAreaRows(place.district, place.talukSlug);
   const totalSamples = rows.reduce((sum, r) => sum + r.sample_count, 0);
-  const topIsps = groupIspScores(rows, 'overall').slice(0, 8);
 
   return {
     district: place.district,
@@ -360,9 +390,9 @@ export async function getTalukData(
     talukSlug: place.talukSlug,
     villages: place.villages,
     totalSamples,
-    broadband,
-    mobile,
-    topIsps,
+    broadband: summarize(rows.filter((r) => r.kind === 'broadband')),
+    mobile: summarize(rows.filter((r) => r.kind === 'mobile')),
+    providers: providersByKind(rows),
     indexable: totalSamples >= INDEX_SAMPLE_THRESHOLD,
   };
 }
@@ -378,29 +408,40 @@ export interface DistrictData {
   district: string;
   districtSlug: string;
   taluks: TalukSummary[];
+  /** Every test in the district, including ones with no taluk recorded. */
   totalSamples: number;
+  broadband: MetricSummary;
+  mobile: MetricSummary;
+  providers: ProvidersByKind;
 }
 
-/** Shape a district hub: every taluk with its headline number. */
+/** Shape a district hub: every taluk with its headline number, plus district-wide
+ *  summaries that also count tests recorded without a taluk. */
 export async function getDistrictData(districtSlug: string): Promise<DistrictData | null> {
   const place = findDistrict(districtSlug);
   if (!place) return null;
 
-  const allRows = await getAllTalukAggregates();
+  const districtRows = await getAreaRows(place.district);
   const taluks: TalukSummary[] = place.taluks.map((taluk) => {
     const slug = slugify(taluk);
-    const rows = allRows.filter(
-      (r) => r.district === place.district && r.taluk != null && slugify(canonicalTalukName(r.taluk)) === slug,
-    );
-    const summary = summarize(rows);
-    return { name: taluk, slug, totalSamples: summary.samples, downloadMbps: summary.downloadMbps };
+    const rows = districtRows.filter((r) => r.taluk != null && slugify(r.taluk) === slug);
+    const summary = summarize(rows.filter((r) => r.kind === 'broadband'));
+    return {
+      name: taluk,
+      slug,
+      totalSamples: rows.reduce((sum, r) => sum + r.sample_count, 0),
+      downloadMbps: summary.downloadMbps,
+    };
   });
 
   return {
     district: place.district,
     districtSlug,
     taluks: taluks.sort((a, b) => b.totalSamples - a.totalSamples || a.name.localeCompare(b.name)),
-    totalSamples: taluks.reduce((sum, t) => sum + t.totalSamples, 0),
+    totalSamples: districtRows.reduce((sum, r) => sum + r.sample_count, 0),
+    broadband: summarize(districtRows.filter((r) => r.kind === 'broadband')),
+    mobile: summarize(districtRows.filter((r) => r.kind === 'mobile')),
+    providers: providersByKind(districtRows),
   };
 }
 
@@ -418,24 +459,52 @@ function variant(seed: string, count: number): number {
 const fmt = (v: number | null, unit: string): string =>
   v == null ? '—' : `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${unit}`;
 
+/** What the prose generators need to know about a place (taluk or village). */
+export interface AreaProseInput {
+  /** Place the copy is about, e.g. "Kanayannor" or "Kakkanad". */
+  name: string;
+  /** Parent area for context, e.g. "Ernakulam". */
+  parent: string;
+  totalSamples: number;
+  broadband: MetricSummary;
+  mobile: MetricSummary;
+  providers: ProvidersByKind;
+}
+
+export function proseInputFromTaluk(data: TalukData): AreaProseInput {
+  return {
+    name: data.taluk,
+    parent: data.district,
+    totalSamples: data.totalSamples,
+    broadband: data.broadband,
+    mobile: data.mobile,
+    providers: data.providers,
+  };
+}
+
+/** The leading broadband provider, as a sentence fragment, or null. */
+function broadbandLeader(input: AreaProseInput): ScoredNetwork | null {
+  return input.providers.broadband[0] ?? null;
+}
+
 /** Unique, data-driven intro paragraph. Template varies by place to reduce the
- *  duplicate-content footprint across the ~75 pages. */
-export function localizedIntro(data: TalukData): string {
-  const { taluk, district, broadband, mobile, totalSamples } = data;
+ *  duplicate-content footprint across the area pages. */
+export function localizedIntro(input: AreaProseInput): string {
+  const { name, parent, broadband, mobile, totalSamples } = input;
   const bb = fmt(broadband.downloadMbps, 'Mbps');
   const mb = fmt(mobile.downloadMbps, 'Mbps');
-  const fastest = data.topIsps[0]?.name;
+  const fastest = broadbandLeader(input)?.name;
 
   if (totalSamples < INDEX_SAMPLE_THRESHOLD) {
-    return `Internet speed data for ${taluk}, ${district} is still being collected. Run a free speed test from ${taluk} to be among the first to put your area's broadband and mobile network performance on the map.`;
+    return `Internet speed data for ${name}, ${parent} is still being collected. Run a free speed test from ${name} to be among the first to put your area's broadband and mobile network performance on the map.`;
   }
 
   const templates = [
-    `Across ${totalSamples} crowdsourced tests in ${taluk}, ${district}, fixed broadband connections record a typical download of ${bb} while mobile data averages ${mb}. ${fastest ? `${fastest} currently leads local results.` : ''}`,
-    `In ${taluk} (${district} district), netundo users measured a median fixed-broadband download of ${bb} and mobile-data download of ${mb} across ${totalSamples} real-world tests. ${fastest ? `The strongest performer so far is ${fastest}.` : ''}`,
-    `${taluk}'s internet, based on ${totalSamples} community speed tests in ${district}: broadband lands around ${bb} and mobile data around ${mb}. ${fastest ? `${fastest} tops the local provider rankings.` : ''}`,
+    `Across ${totalSamples} crowdsourced tests in ${name}, ${parent}, home broadband connections record a typical download of ${bb} while mobile data averages ${mb}. ${fastest ? `${fastest} currently leads local broadband results.` : ''}`,
+    `In ${name} (${parent}), netundo users measured a median home-broadband download of ${bb} and mobile-data download of ${mb} across ${totalSamples} real-world tests. ${fastest ? `The strongest broadband provider so far is ${fastest}.` : ''}`,
+    `${name}'s internet, based on ${totalSamples} community speed tests in ${parent}: home broadband lands around ${bb} and mobile data around ${mb}. ${fastest ? `${fastest} tops the local broadband rankings.` : ''}`,
   ];
-  return templates[variant(`${district}-${taluk}`, templates.length)].trim();
+  return templates[variant(`${parent}-${name}`, templates.length)].trim();
 }
 
 export interface FaqItem {
@@ -443,35 +512,49 @@ export interface FaqItem {
   answer: string;
 }
 
-/** Data-driven FAQ for the page and its FAQPage JSON-LD. */
-export function localizedFaq(data: TalukData): FaqItem[] {
-  const { taluk, broadband, mobile, topIsps, totalSamples } = data;
-  const faqs: FaqItem[] = [];
-  const fastest = topIsps[0];
+/** "Fastest provider" FAQ entry for one connection kind, or null. */
+function fastestFaq(
+  name: string,
+  leader: ScoredNetwork | undefined,
+  summary: MetricSummary,
+  label: string,
+  noun: string,
+): FaqItem | null {
+  if (!leader) return null;
+  return {
+    question: `Which is the fastest ${label} provider in ${name}?`,
+    answer: `Based on ${summary.samples} community ${noun} tests, ${leader.name} currently records the best overall results in ${name}${
+      leader.downloadMbps != null ? `, with a typical download of ${fmt(leader.downloadMbps, 'Mbps')}` : ''
+    }.`,
+  };
+}
 
-  if (fastest) {
-    faqs.push({
-      question: `Which is the fastest internet provider in ${taluk}?`,
-      answer: `Based on ${totalSamples} community speed tests, ${fastest.name} currently records the best overall results in ${taluk}${
-        fastest.downloadMbps != null ? `, with a typical download of ${fmt(fastest.downloadMbps, 'Mbps')}` : ''
-      }.`,
-    });
-  }
+/** Data-driven FAQ for the page and its FAQPage JSON-LD. Broadband and mobile
+ *  are always answered separately. */
+export function localizedFaq(input: AreaProseInput): FaqItem[] {
+  const { name, broadband, mobile, providers } = input;
+  const faqs: FaqItem[] = [];
+
+  const bbFastest = fastestFaq(name, providers.broadband[0], broadband, 'home broadband', 'broadband');
+  if (bbFastest) faqs.push(bbFastest);
 
   faqs.push({
-    question: `What is the average broadband speed in ${taluk}?`,
+    question: `What is the average broadband speed in ${name}?`,
     answer:
       broadband.downloadMbps != null
-        ? `Fixed broadband in ${taluk} averages ${fmt(broadband.downloadMbps, 'Mbps')} download and ${fmt(broadband.uploadMbps, 'Mbps')} upload, with around ${fmt(broadband.latencyMs, 'ms')} latency, across ${broadband.samples} tests.`
-        : `There isn't enough broadband data for ${taluk} yet. Run a test to help build the local average.`,
+        ? `Home broadband (Wi-Fi and wired) in ${name} averages ${fmt(broadband.downloadMbps, 'Mbps')} download and ${fmt(broadband.uploadMbps, 'Mbps')} upload, with around ${fmt(broadband.latencyMs, 'ms')} latency, across ${broadband.samples} tests.`
+        : `There isn't enough home broadband data for ${name} yet. Run a test to help build the local average.`,
   });
 
+  const mobileFastest = fastestFaq(name, providers.mobile[0], mobile, 'mobile data', 'mobile');
+  if (mobileFastest) faqs.push(mobileFastest);
+
   faqs.push({
-    question: `How fast is mobile data in ${taluk}?`,
+    question: `How fast is mobile data in ${name}?`,
     answer:
       mobile.downloadMbps != null
-        ? `Mobile data in ${taluk} averages ${fmt(mobile.downloadMbps, 'Mbps')} download across ${mobile.samples} tests on carriers like Jio, Airtel, Vi and BSNL.`
-        : `Mobile-data results for ${taluk} are still being gathered. Run a test on your phone to contribute.`,
+        ? `Mobile data in ${name} averages ${fmt(mobile.downloadMbps, 'Mbps')} download across ${mobile.samples} tests on carriers like Jio, Airtel, Vi and BSNL.`
+        : `Mobile-data results for ${name} are still being gathered. Run a test on your phone to contribute.`,
   });
 
   return faqs;

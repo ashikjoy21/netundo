@@ -1,11 +1,21 @@
-export type UseCase = 'overall' | 'streaming' | 'gaming' | 'videoCalls' | 'work';
+import type { ConnectionKind } from '@netundo/types';
 
+export type UseCase = 'overall' | 'streaming' | 'gaming' | 'videoCalls' | 'work';
+export type { ConnectionKind };
+
+/** One row of `/v1/aggregate?by=brand`: a provider brand + connection kind in a
+ *  place. `isp_name` is the brand's display name (e.g. "Airtel", "BSNL"). */
 export interface AggregateRow {
   district: string;
-  asn: number | null;
-  isp_name: string | null;
-  connection_type: string;
+  taluk?: string | null;
+  village?: string | null;
+  brand_key: string;
+  isp_name: string;
+  kind: ConnectionKind;
+  asns?: number[];
+  self_reported_share?: number;
   sample_count: number;
+  latest_at?: string;
   p50_download_mbps: number | null;
   p90_download_mbps: number | null;
   avg_download_mbps?: number | null;
@@ -34,10 +44,11 @@ export function weightedMean(
 
 export interface ScoredNetwork {
   key: string;
+  brandKey: string;
   name: string;
-  asn: number | null;
+  asns: number[];
   district: string;
-  connectionType: string;
+  kind: ConnectionKind;
   samples: number;
   score: number;
   confidence: number;
@@ -109,11 +120,12 @@ export function scoreNetwork(row: AggregateRow, useCase: UseCase = 'overall'): S
   const score = clamp(base * 100 * confidenceMultiplier(confidence), 0, 100);
 
   return {
-    key: `${row.asn ?? row.isp_name ?? 'unknown'}-${row.district}-${row.connection_type}`,
-    name: row.isp_name ?? 'Unknown ISP',
-    asn: row.asn,
+    key: `${row.brand_key}-${row.district}-${row.kind}`,
+    brandKey: row.brand_key,
+    name: row.isp_name,
+    asns: row.asns ?? [],
     district: row.district,
-    connectionType: row.connection_type,
+    kind: row.kind,
     samples: row.sample_count,
     score,
     confidence,
@@ -126,10 +138,12 @@ export function scoreNetwork(row: AggregateRow, useCase: UseCase = 'overall'): S
   };
 }
 
+/** Merge rows across places into one entry per brand + kind (Kerala-wide or
+ *  area-wide), then score and rank. Broadband and mobile never share a row. */
 export function groupIspScores(rows: AggregateRow[], useCase: UseCase): ScoredNetwork[] {
   const buckets = new Map<string, AggregateRow[]>();
   for (const row of rows) {
-    const key = String(row.asn ?? row.isp_name ?? 'unknown');
+    const key = `${row.brand_key}|${row.kind}`;
     const bucket = buckets.get(key);
     if (bucket) bucket.push(row);
     else buckets.set(key, [row]);
@@ -156,6 +170,20 @@ export function formatConnectionType(type: string): string {
   if (type === 'wired') return 'Wired';
   if (type === 'mobile') return 'Mobile';
   return type || 'Unknown';
+}
+
+export const KIND_LABELS: Record<ConnectionKind, string> = {
+  broadband: 'Home broadband',
+  mobile: 'Mobile data',
+};
+
+export function formatKind(kind: ConnectionKind): string {
+  return KIND_LABELS[kind];
+}
+
+/** Map a browser connection type to the ranking kind. */
+export function kindForConnectionType(type: string): ConnectionKind {
+  return type === 'mobile' ? 'mobile' : 'broadband';
 }
 
 function bestUseCase(row: AggregateRow): UseCase {
@@ -190,16 +218,18 @@ function mergeRows(rows: AggregateRow[]): AggregateRow {
   };
   const names = new Map<string, number>();
   for (const row of rows) {
-    if (row.isp_name) names.set(row.isp_name, (names.get(row.isp_name) ?? 0) + row.sample_count);
+    names.set(row.isp_name, (names.get(row.isp_name) ?? 0) + row.sample_count);
   }
-  const name = [...names.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const name = [...names.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? rows[0].isp_name;
   const first = rows[0];
+  const districts = new Set(rows.map((row) => row.district));
 
   return {
-    district: 'Kerala',
-    asn: first.asn,
+    district: districts.size === 1 ? first.district : 'Kerala',
+    brand_key: first.brand_key,
     isp_name: name,
-    connection_type: 'all',
+    kind: first.kind,
+    asns: [...new Set(rows.flatMap((row) => row.asns ?? []))].sort((a, b) => a - b),
     sample_count: totalSamples,
     p50_download_mbps: weighted('p50_download_mbps'),
     p90_download_mbps: weighted('p90_download_mbps'),

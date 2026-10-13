@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { SpeedMap } from '@/components/landing/SpeedMap';
-import { weightedMean, type AggregateRow } from '@/lib/networkScore';
+import { formatKind, weightedMean, type AggregateRow, type ConnectionKind } from '@/lib/networkScore';
+import { fetchBrandAggregates, type AggregatePeriod } from '@/lib/api';
+import { KindToggle } from '@/components/KindToggle';
 import { slugify } from '@/lib/slug';
 
 const DISTRICTS = [
@@ -11,33 +13,39 @@ const DISTRICTS = [
   'Kozhikode', 'Wayanad', 'Kannur', 'Kasaragod',
 ];
 
-const CONN_LABELS: Record<string, string> = {
-  mobile: 'Mobile data',
-  wifi: 'Wi-Fi',
-  wired: 'Wired',
+const PERIOD_LABELS: Record<AggregatePeriod, string> = {
+  weekly: 'the last 7 days',
+  monthly: 'the last 28 days',
+  quarter: 'the last 90 days',
+  all: 'all tests so far',
 };
 
 export default function KeralaPage() {
   const [data, setData] = useState<AggregateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState('');
-  const [selectedConn, setSelectedConn] = useState('');
+  const [kind, setKind] = useState<ConnectionKind>('broadband');
+  const [period, setPeriod] = useState<AggregatePeriod>('quarter');
 
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
-    if (!apiBase) { setLoading(false); return; }
-
+    let cancelled = false;
     setLoading(true);
-    const params = new URLSearchParams();
-    if (selectedDistrict) params.set('district', selectedDistrict);
-    if (selectedConn) params.set('connection_type', selectedConn);
-
-    fetch(`${apiBase}/v1/aggregate?${params}`)
-      .then((r) => r.json())
-      .then((rows: AggregateRow[]) => { setData(Array.isArray(rows) ? rows : []); })
-      .catch(() => setData([]))
-      .finally(() => setLoading(false));
-  }, [selectedDistrict, selectedConn]);
+    (async () => {
+      // Widen the window until there is something to show, so the page is never
+      // blank just because the last few weeks were quiet.
+      for (const p of ['quarter', 'all'] as AggregatePeriod[]) {
+        const rows = await fetchBrandAggregates({ period: p, district: selectedDistrict || undefined, kind });
+        if (cancelled) return;
+        if (rows.length || p === 'all') {
+          setData(rows);
+          setPeriod(p);
+          break;
+        }
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDistrict, kind]);
 
   // Per-district summary: sample-weighted mean download/latency across matching tests.
   const districtSummary = DISTRICTS.map((d) => {
@@ -54,14 +62,10 @@ export default function KeralaPage() {
 
   const visibleDistricts = districtSummary.filter(({ district, total }) => {
     if (selectedDistrict) return district === selectedDistrict;
-    if (selectedConn) return total > 0;
     return true;
   });
 
-  const filterLabel = [
-    selectedDistrict || 'All districts',
-    selectedConn ? CONN_LABELS[selectedConn] : 'All connections',
-  ].join(' · ');
+  const filterLabel = [selectedDistrict || 'All districts', formatKind(kind)].join(' · ');
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
@@ -72,8 +76,10 @@ export default function KeralaPage() {
         </p>
       </div>
 
+      <KindToggle value={kind} onChange={setKind} />
+
       <SpeedMap
-        connectionType={selectedConn}
+        kind={kind}
         district={selectedDistrict}
         hideConnectionFilters
       />
@@ -82,8 +88,8 @@ export default function KeralaPage() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">District-wise performance</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Average download speed, latency, and test counts from the last 7 days.
-            {!loading && (selectedDistrict || selectedConn) ? (
+            {formatKind(kind)} download speed, latency, and test counts from {PERIOD_LABELS[period]}.
+            {!loading && selectedDistrict ? (
               <span className="text-gray-700"> Showing: {filterLabel}.</span>
             ) : null}
           </p>
@@ -99,20 +105,10 @@ export default function KeralaPage() {
           <option value="">All districts</option>
           {DISTRICTS.map((d) => <option key={d} value={d}>{d}</option>)}
         </select>
-        <select
-          value={selectedConn}
-          onChange={(e) => setSelectedConn(e.target.value)}
-          className="rounded-lg border border-gray-200 px-3 py-2 text-sm bg-white"
-        >
-          <option value="">All connections</option>
-          <option value="mobile">Mobile data</option>
-          <option value="wifi">Wi-Fi</option>
-          <option value="wired">Wired</option>
-        </select>
-        {(selectedDistrict || selectedConn) && (
+        {selectedDistrict && (
           <button
             type="button"
-            onClick={() => { setSelectedDistrict(''); setSelectedConn(''); }}
+            onClick={() => setSelectedDistrict('')}
             className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
           >
             Clear filters
@@ -129,7 +125,7 @@ export default function KeralaPage() {
         </div>
       ) : visibleDistricts.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-10 text-center text-sm text-gray-500">
-          No tests match these filters yet. Try another district or connection type, or{' '}
+          No {formatKind(kind).toLowerCase()} tests here yet. Try another district or connection type, or{' '}
           <a href="/test" className="font-medium text-cf-orange hover:underline">run a test</a>.
         </div>
       ) : (
@@ -149,7 +145,7 @@ export default function KeralaPage() {
 
       {/* ISP table */}
       <section>
-        <h2 className="text-base font-semibold text-gray-800 mb-3">ISP Performance by District</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-3">{formatKind(kind)} providers by district</h2>
         {loading ? (
           <div className="h-40 bg-gray-50 rounded-xl animate-pulse" />
         ) : data.length === 0 ? (
@@ -159,7 +155,7 @@ export default function KeralaPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {['District', 'ISP', 'Type', 'Samples', 'P50 Download', 'P90 Download', 'P50 Latency'].map((h) => (
+                  {['District', 'Provider', 'Samples', 'P50 Download', 'P90 Download', 'P50 Latency'].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
                       {h}
                     </th>
@@ -167,15 +163,10 @@ export default function KeralaPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {data.slice(0, 50).map((row, i) => (
+                {[...data].sort((a, b) => b.sample_count - a.sample_count).slice(0, 50).map((row, i) => (
                   <tr key={i} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3 font-medium text-gray-800">{row.district}</td>
-                    <td className="px-4 py-3 text-gray-600">{row.isp_name ?? '—'}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600 capitalize">
-                        {row.connection_type}
-                      </span>
-                    </td>
+                    <td className="px-4 py-3 text-gray-600">{row.isp_name}</td>
                     <td className="px-4 py-3 text-gray-600">{row.sample_count}</td>
                     <td className="px-4 py-3 font-semibold text-cf-orange">{row.p50_download_mbps?.toFixed(1) ?? '—'} Mbps</td>
                     <td className="px-4 py-3 text-gray-600">{row.p90_download_mbps?.toFixed(1) ?? '—'} Mbps</td>

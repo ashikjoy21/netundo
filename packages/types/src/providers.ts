@@ -76,10 +76,13 @@ export const BRANDS: Brand[] = [
     name: 'Kerala Vision',
     nameMl: 'കേരള വിഷൻ',
     kinds: ['broadband'],
-    // TODO: confirm Kerala Vision's ASN(s). Until then, Kerala Vision appears
-    // only through self-reported provider answers.
-    asns: [],
+    // AS138754 belongs to Kerala Communicators Cable Ltd (KCCL), the operator
+    // consortium behind Kerala Vision. Its per-prefix org names are often the
+    // member cable operator ("Tirur Cable Vision", "VBC VISION", …), so LCO
+    // self-reports from this AS are expected, not mismatches.
+    asns: [{ asn: 138754, kind: 'broadband', note: 'KCCL / Kerala Vision Broad Band' }],
     inPicker: true,
+    upstream: true,
   },
   {
     slug: 'asianet',

@@ -3,16 +3,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, ArrowDownUp, Gamepad2, Headphones, Play, Search, Trophy, Wifi } from 'lucide-react';
 import {
-  compareRankedNetworks,
-  formatConnectionType,
+  formatKind,
   groupIspScores,
   pickChartLeader,
-  scoreNetwork,
   USE_CASES,
   type AggregateRow,
+  type ConnectionKind,
   type ScoredNetwork,
   type UseCase,
 } from '@/lib/networkScore';
+import { API_BASE, fetchBrandAggregates } from '@/lib/api';
+import { KindToggle } from '@/components/KindToggle';
 
 const DISTRICTS = [
   'Thiruvananthapuram', 'Kollam', 'Pathanamthitta', 'Alappuzha', 'Kottayam',
@@ -24,39 +25,43 @@ export default function ChartsPage() {
   const [rows, setRows] = useState<AggregateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [district, setDistrict] = useState('');
-  const [connectionType, setConnectionType] = useState('');
+  const [kind, setKind] = useState<ConnectionKind>('broadband');
   const [useCase, setUseCase] = useState<UseCase>('overall');
   const [query, setQuery] = useState('');
 
+  // Remember the broadband/mobile choice in the URL (?kind=mobile) without
+  // changing the page's path.
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
-    if (!apiBase) {
+    const fromUrl = new URLSearchParams(window.location.search).get('kind');
+    if (fromUrl === 'mobile') setKind('mobile');
+  }, []);
+
+  const chooseKind = (next: ConnectionKind) => {
+    setKind(next);
+    const url = new URL(window.location.href);
+    if (next === 'broadband') url.searchParams.delete('kind');
+    else url.searchParams.set('kind', next);
+    window.history.replaceState(null, '', url);
+  };
+
+  useEffect(() => {
+    if (!API_BASE) {
       setLoading(false);
       return;
     }
-
-    const params = new URLSearchParams({ period: 'monthly' });
-    if (district) params.set('district', district);
-    if (connectionType) params.set('connection_type', connectionType);
-
     setLoading(true);
-    fetch(`${apiBase}/v1/aggregate?${params}`)
-      .then((r) => r.json())
-      .then((data: AggregateRow[]) => setRows(Array.isArray(data) ? data : []))
-      .catch(() => setRows([]))
+    fetchBrandAggregates({ period: 'monthly', district: district || undefined, kind })
+      .then(setRows)
       .finally(() => setLoading(false));
-  }, [district, connectionType]);
+  }, [district, kind]);
 
   const charts = useMemo(() => {
-    const scored = district
-      ? rows.map((row) => scoreNetwork(row, useCase)).sort(compareRankedNetworks)
-      : groupIspScores(rows, useCase);
-
+    const scored = groupIspScores(rows, useCase);
     const needle = query.trim().toLowerCase();
     return needle
-      ? scored.filter((row) => `${row.name} ${row.district} ${row.asn ?? ''}`.toLowerCase().includes(needle))
+      ? scored.filter((row) => `${row.name} ${row.district} ${row.asns.join(' ')}`.toLowerCase().includes(needle))
       : scored;
-  }, [district, query, rows, useCase]);
+  }, [query, rows, useCase]);
 
   const selectedUseCase = USE_CASES.find((item) => item.id === useCase) ?? USE_CASES[0];
   const leader = pickChartLeader(charts);
@@ -86,7 +91,11 @@ export default function ChartsPage() {
         </div>
       </section>
 
-      <section className="mt-6 grid gap-3 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm lg:grid-cols-[1fr_auto_auto_auto]">
+      <div className="mt-6">
+        <KindToggle value={kind} onChange={chooseKind} />
+      </div>
+
+      <section className="mt-3 grid gap-3 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm lg:grid-cols-[1fr_auto_auto]">
         <label className="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2">
           <Search className="h-4 w-4 text-gray-400" />
           <input
@@ -103,16 +112,6 @@ export default function ChartsPage() {
         >
           <option value="">All Kerala</option>
           {DISTRICTS.map((item) => <option key={item}>{item}</option>)}
-        </select>
-        <select
-          value={connectionType}
-          onChange={(event) => setConnectionType(event.target.value)}
-          className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-cf-orange"
-        >
-          <option value="">All connections</option>
-          <option value="mobile">Mobile data</option>
-          <option value="wifi">Wi-Fi</option>
-          <option value="wired">Wired</option>
         </select>
         <select
           value={useCase}
@@ -133,7 +132,7 @@ export default function ChartsPage() {
                   <div>
                     <h2 className="text-2xl font-bold tracking-[-0.04em] text-gray-950">{leader.name}</h2>
                     <p className="mt-1 text-sm text-gray-500">
-                      {district ? leader.district : 'Kerala-wide'} · {formatConnectionType(leader.connectionType)}
+                      {district ? leader.district : 'Kerala-wide'} · {formatKind(leader.kind)}
                     </p>
                   </div>
                   <ScoreBadge score={leader.score} />
@@ -195,9 +194,11 @@ function ChartRow({ row, rank, districtScoped }: { row: ScoredNetwork; rank: num
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate text-base font-bold text-gray-950">{row.name}</p>
           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
-            {formatConnectionType(row.connectionType)}
+            {formatKind(row.kind)}
           </span>
-          {row.asn && <span className="text-xs text-gray-400">ASN {row.asn}</span>}
+          {row.asns.length > 0 && (
+            <span className="text-xs text-gray-400">AS{row.asns.slice(0, 3).join(', AS')}</span>
+          )}
         </div>
         <p className="mt-1 text-xs text-gray-500">
           {districtScoped ? row.district : `${row.samples} tests Kerala-wide`} · Best for {USE_CASES.find((item) => item.id === row.bestFor)?.shortLabel}

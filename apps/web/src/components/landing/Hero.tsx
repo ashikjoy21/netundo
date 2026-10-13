@@ -3,28 +3,18 @@
 import { useEffect, useState } from 'react';
 import { Activity, Building2, Gauge, MapPin } from 'lucide-react';
 
-interface AggRow {
-  district: string;
-  asn: number | null;
-  isp_name: string | null;
-  sample_count: number;
-}
+import { fetchBrandAggregates } from '@/lib/api';
 
 export function Hero() {
   const [stats, setStats] = useState<{ tests: number; isps: number } | null>(null);
 
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
-    if (!apiBase) return;
-    fetch(`${apiBase}/v1/aggregate?period=monthly`)
-      .then((r) => r.json())
-      .then((rows: AggRow[]) => {
-        if (!Array.isArray(rows)) return;
-        const tests = rows.reduce((a, r) => a + (r.sample_count ?? 0), 0);
-        const isps = new Set(rows.map((r) => r.asn ?? r.isp_name).filter(Boolean)).size;
-        setStats({ tests, isps });
-      })
-      .catch(() => {});
+    fetchBrandAggregates({ period: 'monthly' }).then((rows) => {
+      if (!rows.length) return;
+      const tests = rows.reduce((a, r) => a + (r.sample_count ?? 0), 0);
+      const isps = new Set(rows.map((r) => r.brand_key)).size;
+      setStats({ tests, isps });
+    });
   }, []);
 
   return (

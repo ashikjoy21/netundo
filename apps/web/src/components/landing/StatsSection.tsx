@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Gamepad2, Gauge, Headphones, Play, Trophy } from 'lucide-react';
 import {
   compareRankedNetworks,
-  formatConnectionType,
+  formatKind,
   groupIspScores,
   pickChartLeader,
   scoreNetwork,
@@ -12,22 +12,25 @@ import {
   type AggregateRow,
   type ScoredNetwork,
 } from '@/lib/networkScore';
+import { API_BASE, fetchBrandAggregates } from '@/lib/api';
 
 export function StatsSection() {
   const [rows, setRows] = useState<AggregateRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Home broadband only (the default view everywhere); widen the window when the
+  // last 90 days are empty so the homepage never shows a blank leaderboard.
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_WORKER_URL;
-    if (!apiBase) {
+    if (!API_BASE) {
       setLoading(false);
       return;
     }
-    fetch(`${apiBase}/v1/aggregate?period=monthly`)
-      .then((r) => r.json())
-      .then((data: AggregateRow[]) => setRows(Array.isArray(data) ? data : []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    (async () => {
+      let data = await fetchBrandAggregates({ period: 'quarter', kind: 'broadband' });
+      if (!data.length) data = await fetchBrandAggregates({ period: 'all', kind: 'broadband' });
+      setRows(data);
+      setLoading(false);
+    })();
   }, []);
 
   // Districts ranked by a Cloudflare-inspired quality score, not raw speed alone.
@@ -195,7 +198,7 @@ function UseCaseCard({
           <p className="mt-1 text-xs text-gray-500">
             {leader.downloadMbps?.toFixed(0) ?? '—'} Mbps · {leader.latencyMs?.toFixed(0) ?? '—'} ms · {leader.samples} tests
           </p>
-          <p className="mt-2 text-xs font-medium text-cf-orange">{formatConnectionType(leader.connectionType)} network</p>
+          <p className="mt-2 text-xs font-medium text-cf-orange">{formatKind(leader.kind)}</p>
         </div>
       ) : (
         <p className="mt-4 text-sm text-gray-400">Waiting for enough public tests.</p>

@@ -20,6 +20,7 @@ describe('resolveProvider — ASN only', () => {
     [141549, 'wifi', 'railwire', 'broadband'],
     [24309, 'wifi', 'act', 'broadband'],
     [135217, 'wifi', 'peak-air', 'broadband'],
+    [138754, 'wifi', 'kerala-vision', 'broadband'],
   ])('AS%i on %s → %s/%s', (asn, ct, brand, kind) => {
     const out = r(asn, ct);
     expect(out.brandKey).toBe(brand);
@@ -43,9 +44,9 @@ describe('resolveProvider — ASN only', () => {
   });
 
   it('falls back to a cleaned org name for unmapped ASNs', () => {
-    const out = r(138754, 'wifi', { ispOrg: 'VBC VISION' });
-    expect(out.brandKey).toBe('asn:138754');
-    expect(out.displayName).toBe('Vbc Vision');
+    const out = r(133301, 'wifi', { ispOrg: 'INHOME ENTERTAINMENTS PRIVATE LIMITED' });
+    expect(out.brandKey).toBe('asn:133301');
+    expect(out.displayName).toBe('Inhome Entertainments');
   });
 });
 
@@ -65,10 +66,20 @@ describe('resolveProvider — self-reported', () => {
     expect(a.brandKey).toBe(b.brandKey);
   });
 
-  it('trusts a self-report for brands without known ASNs (Kerala Vision)', () => {
-    const out = r(138754, 'wifi', { ispOrg: 'VBC VISION', reported: 'kerala-vision' });
-    expect(out.brandKey).toBe('kerala-vision');
+  it('trusts a self-report for brands without known ASNs (KFON)', () => {
+    const out = r(9829, 'wifi', { reported: 'kfon' });
+    expect(out.brandKey).toBe('kfon');
     expect(out.mismatch).toBe(false);
+  });
+
+  it('accepts an LCO answer from the Kerala Vision AS (KCCL member operators)', () => {
+    const out = r(138754, 'wifi', { ispOrg: 'Tirur Cable Vision Pvt Ltd', reported: 'lco', reportedName: 'Tirur Cable Vision' });
+    expect(out.brandKey).toBe('lco:tirur-cable-vision');
+    expect(out.mismatch).toBe(false);
+  });
+
+  it('accepts a Kerala Vision answer from another LCO upstream', () => {
+    expect(r(9583, 'wifi', { reported: 'kerala-vision' }).brandKey).toBe('kerala-vision');
   });
 
   it('overrides a self-report that contradicts the ASN', () => {

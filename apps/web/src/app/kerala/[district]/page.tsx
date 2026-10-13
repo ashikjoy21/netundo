@@ -6,6 +6,8 @@ import { absoluteUrl } from '@/lib/site';
 import { Breadcrumbs, type Crumb } from '@/components/locality/Breadcrumbs';
 import { TraiBenchmark } from '@/components/locality/TraiBenchmark';
 import { MlabBenchmark } from '@/components/locality/MlabBenchmark';
+import { IspTable } from '@/components/locality/IspTable';
+import { SummaryCards } from '@/components/locality/SummaryCards';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
 
 interface PageProps {
@@ -63,6 +65,14 @@ export default async function DistrictPage({ params }: PageProps) {
         </p>
       </header>
 
+      <SummaryCards broadband={data.broadband} mobile={data.mobile} placeName={place.district} />
+
+      <section className="space-y-3">
+        <h2 className="text-base font-semibold text-gray-900">Best internet providers in {place.district}</h2>
+        <IspTable providers={data.providers} placeName={place.district} />
+      </section>
+
+      <h2 className="text-base font-semibold text-gray-900">Areas in {place.district}</h2>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {data.taluks.map((taluk) => (
           <a
@@ -73,7 +83,7 @@ export default async function DistrictPage({ params }: PageProps) {
             <p className="truncate text-sm font-semibold text-gray-900">{taluk.name}</p>
             <p className="mt-1 text-2xl font-bold text-cf-orange">
               {taluk.downloadMbps != null ? taluk.downloadMbps.toFixed(0) : '—'}
-              <span className="ml-0.5 text-xs font-normal text-gray-400">Mbps</span>
+              <span className="ml-0.5 text-xs font-normal text-gray-400">Mbps broadband</span>
             </p>
             <p className="mt-0.5 text-xs text-gray-400">
               {taluk.totalSamples > 0 ? `${taluk.totalSamples} tests` : 'No data yet'}

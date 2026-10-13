@@ -12,6 +12,7 @@ import {
   getMlabForTaluk,
   localizedFaq,
   localizedIntro,
+  proseInputFromTaluk,
 } from '@/lib/localityData';
 import { absoluteUrl } from '@/lib/site';
 import { Breadcrumbs, type Crumb } from '@/components/locality/Breadcrumbs';
@@ -69,7 +70,8 @@ export default async function TalukPage({ params }: PageProps) {
     { label: place.district, href: `/kerala/${district}` },
     { label: place.taluk },
   ];
-  const faqs = localizedFaq(data);
+  const prose = proseInputFromTaluk(data);
+  const faqs = localizedFaq(prose);
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-4 py-8">
@@ -80,14 +82,14 @@ export default async function TalukPage({ params }: PageProps) {
         <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
           Internet speed in {place.taluk}, {place.district}
         </h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">{localizedIntro(data)}</p>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">{localizedIntro(prose)}</p>
       </header>
 
       <SummaryCards broadband={data.broadband} mobile={data.mobile} placeName={place.taluk} />
 
       <section className="space-y-3">
         <h2 className="text-base font-semibold text-gray-900">Best internet providers in {place.taluk}</h2>
-        <IspTable isps={data.topIsps} placeName={place.taluk} />
+        <IspTable providers={data.providers} placeName={place.taluk} />
       </section>
 
       {mlab && <MlabBenchmark data={mlab} placeName={place.taluk} geoLevel="taluk" />}
