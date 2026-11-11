@@ -1,3 +1,11 @@
+import type { Metadata } from 'next';
+import { pageMetadata } from '@/lib/site';
+export const metadata: Metadata = pageMetadata(
+  '/methodology',
+  'How netundo Measures and Ranks Internet Providers',
+  'How netundo turns browser speed tests into fair, area-level provider rankings for Kerala: sampling, confidence weighting and data sources.',
+);
+
 export default function MethodologyPage() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-12">
