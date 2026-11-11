@@ -7,6 +7,7 @@ import { Breadcrumbs, type Crumb } from '@/components/locality/Breadcrumbs';
 import { TraiBenchmark } from '@/components/locality/TraiBenchmark';
 import { MlabBenchmark } from '@/components/locality/MlabBenchmark';
 import { LocalityJsonLd } from '@/components/locality/JsonLd';
+import { IspTable } from '@/components/locality/IspTable';
 
 interface PageProps {
   params: Promise<{ district: string }>;
@@ -22,8 +23,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!place) return {};
 
   const path = `/kerala/${district}`;
-  const title = `Internet Speed in ${place.district}, Kerala — Broadband & Mobile by Area | netundo`;
-  const description = `Compare broadband and mobile internet speeds across ${place.taluks.length} areas in ${place.district}, Kerala, from crowdsourced netundo speed tests.`;
+  const title = `Broadband Providers & Internet Speed in ${place.district}, Kerala | netundo`;
+  const description = `Which broadband and mobile providers work best in ${place.district}? Compare real speeds by provider and across ${place.taluks.length} areas, from crowdsourced netundo speed tests.`;
   return {
     title,
     description,
@@ -55,7 +56,7 @@ export default async function DistrictPage({ params }: PageProps) {
 
       <header>
         <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
-          Internet speed in {place.district}, Kerala
+          Broadband providers and internet speed in {place.district}, Kerala
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600">
           Broadband and mobile-data performance across {data.taluks.length} areas in {place.district}, measured by{' '}
@@ -81,6 +82,13 @@ export default async function DistrictPage({ params }: PageProps) {
           </a>
         ))}
       </div>
+
+      {data.topIsps.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-base font-semibold text-gray-900">Internet providers in {place.district}</h2>
+          <IspTable isps={data.topIsps} placeName={place.district} />
+        </section>
+      )}
 
       {mlab && <MlabBenchmark data={mlab} placeName={place.district} geoLevel="district" />}
 

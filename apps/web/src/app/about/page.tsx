@@ -1,3 +1,11 @@
+import type { Metadata } from 'next';
+import { pageMetadata } from '@/lib/site';
+export const metadata: Metadata = pageMetadata(
+  '/about',
+  'About netundo — Crowdsourced Kerala Internet Map',
+  'netundo is an open, crowdsourced map of internet speed and network quality in Kerala, built from speed tests run by people in each area.',
+);
+
 export default function AboutPage() {
   return (
     <InfoPage

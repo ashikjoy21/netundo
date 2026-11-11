@@ -378,6 +378,8 @@ export interface DistrictData {
   districtSlug: string;
   taluks: TalukSummary[];
   totalSamples: number;
+  /** Providers seen anywhere in the district, ranked like the taluk pages. */
+  topIsps: ScoredNetwork[];
 }
 
 /** Shape a district hub: every taluk with its headline number. */
@@ -400,6 +402,10 @@ export async function getDistrictData(districtSlug: string): Promise<DistrictDat
     districtSlug,
     taluks: taluks.sort((a, b) => b.totalSamples - a.totalSamples || a.name.localeCompare(b.name)),
     totalSamples: taluks.reduce((sum, t) => sum + t.totalSamples, 0),
+    topIsps: groupIspScores(
+      allRows.filter((r) => r.district === place.district),
+      'overall',
+    ).slice(0, 10),
   };
 }
 

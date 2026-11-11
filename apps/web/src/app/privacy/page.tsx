@@ -1,3 +1,11 @@
+import type { Metadata } from 'next';
+import { pageMetadata } from '@/lib/site';
+export const metadata: Metadata = pageMetadata(
+  '/privacy',
+  'Privacy — netundo',
+  'What netundo collects when you run a speed test, what it publishes, and what it never stores.',
+);
+
 export default function PrivacyPage() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-12">
